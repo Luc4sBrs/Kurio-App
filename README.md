@@ -2,8 +2,8 @@
 
 Frontend em React + TypeScript para descobrir, favoritar e comprar colecionáveis digitais. Toda a camada de dados é simulada: a API REST e os eventos em tempo real são interceptados pelo MSW, então o projeto roda sem backend, sem blockchain e sem gateway de pagamento.
 
-- **Aplicação publicada:** [Kurio]
-- **Repositório:** [Kurio]
+- **Aplicação publicada:** [https://kurionft-market.vercel.app/?page=1]
+- **Repositório:** [https://github.com/Luc4sBrs/Kurio-App]
 
 ## Stack
 
