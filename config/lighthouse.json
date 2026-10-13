@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "profiles": {
+    "mobile": { "formFactor": "mobile", "screenEmulation": { "mobile": true, "width": 390, "height": 844, "deviceScaleFactor": 1, "disabled": false } },
+    "desktop": {
+      "formFactor": "desktop",
+      "screenEmulation": { "mobile": false, "width": 1440, "height": 960, "deviceScaleFactor": 1, "disabled": false },
+      "throttling": { "rttMs": 40, "throughputKbps": 10240, "cpuSlowdownMultiplier": 1, "requestLatencyMs": 0, "downloadThroughputKbps": 0, "uploadThroughputKbps": 0 },
+      "emulatedUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    }
+  },
+  "pages": ["/", "/nft/ember-001"],
+  "runsPerPageAndProfile": 3,
+  "categories": ["performance", "accessibility", "best-practices", "seo"],
+  "throttlingMethod": "simulate",
+  "scenario": "standard"
+}

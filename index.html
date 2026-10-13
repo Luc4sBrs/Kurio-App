@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#100e0b" />
+    <meta name="description" content="Descubra, colecione e negocie arte digital na KURIO." />
+    <link rel="icon" type="image/svg+xml" href="/kurio-mark.svg" />
+    <link rel="preload" as="image" href="/featured-ape.svg" fetchpriority="high" />
+    <title>KURIO — Marketplace de NFTs</title>
+    <style>
+      :root{color-scheme:dark;background:#100e0b;color:#f2e9dd;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+      *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#100e0b}
+      #app-boot-shell{position:fixed;z-index:999;inset:0;display:grid;place-items:start center;background:#100e0b;pointer-events:none}
+      .boot-inner{width:min(1160px,calc(100% - 48px));padding-top:20px}
+      .boot-header{height:40px;display:flex;align-items:center;gap:11px;color:#f1e6d8;font-size:15px;font-weight:800;letter-spacing:.22em}
+      .boot-mark{width:19px;height:19px;display:grid;place-items:center;border-radius:50% 50% 50% 12%;transform:rotate(-12deg);background:#da8747;color:#21150e;font-size:9px;letter-spacing:0}
+      .boot-hero{min-height:280px;margin-top:18px;padding:28px;display:grid;grid-template-columns:1fr 240px;align-items:center;gap:24px;border:1px solid #32251b;border-radius:12px;background:#15110e}
+      .boot-eyebrow{color:#c38c5e;font-size:9px;letter-spacing:.12em;text-transform:uppercase}
+      .boot-title{max-width:13ch;margin:13px 0 0;color:#f2e8da;font-size:clamp(24px,4vw,46px);line-height:1.1;letter-spacing:-.04em;font-weight:750;text-transform:uppercase}
+      .boot-title span{color:#e4a15e}
+      .boot-art{height:220px;border:1px solid #51402e;border-radius:10px;background:linear-gradient(140deg,#eee2c3,#84906e 60%,#60422c);box-shadow:0 16px 45px #0006}
+      .boot-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+      .boot-cards i{height:82px;border:1px solid #2e241c;border-radius:7px;background:linear-gradient(110deg,#17130f 35%,#211a14 50%,#17130f 65%);background-size:220% 100%;animation:boot-shimmer 1.7s linear infinite}
+      @keyframes boot-shimmer{to{background-position-x:-220%}}
+      @media(max-width:620px){.boot-inner{width:calc(100% - 28px);padding-top:12px}.boot-header{height:34px;font-size:13px}.boot-hero{min-height:150px;margin-top:8px;padding:12px;grid-template-columns:1fr 112px;gap:10px}.boot-eyebrow{font-size:6px}.boot-title{font-size:16px;margin-top:8px}.boot-art{height:112px}.boot-cards{grid-template-columns:repeat(2,1fr);gap:8px;margin-top:10px}.boot-cards i{height:80px}}
+      @media(prefers-reduced-motion:reduce){.boot-cards i{animation:none}}
+    </style>
+  </head>
+  <body>
+    <div id="app-boot-shell" aria-hidden="true"><div class="boot-inner"><div class="boot-header"><span class="boot-mark">K</span>KURIO</div><main class="boot-hero"><div><div class="boot-eyebrow">COLECIONE O QUE TE REPRESENTA</div><h1 class="boot-title">Seja dono da sua <span>arte digital</span></h1></div><div class="boot-art"></div></main><div class="boot-cards"><i></i><i></i><i></i></div></div></div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

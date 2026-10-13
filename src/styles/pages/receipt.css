@@ -1,0 +1,58 @@
+/* Confirmation / receipt */
+.receipt-status { display: flex; align-items: flex-start; gap: 16px; padding: 23px; border: 1px solid #34543b; border-radius: 9px; background: linear-gradient(105deg, #18241a, #171a13); }
+.receipt-status.declined { background: linear-gradient(105deg, #291b18, #1b1511); border-color: #714239; }
+.receipt-status.pending { background: linear-gradient(105deg, #2c2115, #1b1711); border-color: #69502f; }
+.receipt-status-icon { width: 46px; height: 46px; display: grid; place-items: center; flex: 0 0 auto; color: #99c095; background: #213326; border: 1px solid #426449; border-radius: 50%; }
+.declined .receipt-status-icon { color: #df9381; background: #341f1a; border-color: #6d3e31; }
+.pending .receipt-status-icon { color: #e7aa73; background: #3a2817; border-color: #795330; }
+.receipt-status > div > span { color: #9abe97; font-size: 8px; letter-spacing: 1px; font-weight: 700; }
+.declined > div > span { color: #e28d7b; }
+.pending > div > span { color: #e2a66f; }
+.receipt-status h1 { margin: 5px 0 5px; color: #f0e4d8; font: 500 25px 'Playfair Display', Georgia, serif; }
+.receipt-status p { margin: 0; color: #a39689; font-size: 9px; line-height: 1.6; }
+.pending-card { min-height: 49px; margin: 11px 0; padding: 8px 12px; display: flex; align-items: center; gap: 9px; color: #b59c80; background: #221b12; border: 1px solid #5f4729; border-radius: 6px; font-size: 9px; }
+.pending-card .button:first-of-type { margin-left: auto; }
+.pending-card .button { font-size: 8px; }
+.receipt-layout { display: grid; grid-template-columns: minmax(0,1fr) 250px; gap: 18px; margin-top: 17px; align-items: start; }
+.receipt-main { display: flex; flex-direction: column; gap: 12px; }
+.receipt-card, .transaction-card, .receipt-next { padding: 17px; border: 1px solid var(--line); border-radius: 8px; background: #17130f; }
+.receipt-card { border: 2px dashed var(--line-strong); background: linear-gradient(145deg, #1c1712, #14100c); }
+.receipt-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
+.receipt-heading h2 { margin: 7px 0 0; font: 500 17px 'Playfair Display', Georgia, serif; }
+.receipt-heading .eyebrow { font-size: 7px; }
+.order-pill { padding: 5px 8px; border-radius: 99px; font-size: 7px; }
+.order-pill.confirmed { color: #9bc39a; background: #1a2b1e; border: 1px solid #3a583c; }
+.order-pill.declined { color: #e49a84; background: #321e19; border: 1px solid #764235; }
+.order-pill.pending { color: #e3b079; background: #322416; border: 1px solid #6b4c2c; }
+.receipt-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.receipt-meta > div { display: flex; flex-direction: column; gap: 5px; }
+.receipt-meta span, .transaction-card > div > span { color: #827467; font-size: 7px; letter-spacing: .7px; }
+.receipt-meta b { color: #d4c6b7; font-size: 9px; }
+.receipt-items { padding: 7px 0; }
+.receipt-item { display: flex; align-items: center; gap: 9px; padding: 8px 0; }
+.receipt-item img { width: 39px; height: 43px; object-fit: cover; border-radius: 4px; }
+.receipt-item > span { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.receipt-item b { color: #ded1c4; font-size: 9px; }
+.receipt-item small { color: #897b6f; font-size: 7px; }
+.receipt-item strong { color: #e5d6c8; font-size: 9px; }
+.receipt-total-lines { width: 55%; margin-left: auto; display: flex; flex-direction: column; gap: 9px; padding-top: 11px; border-top: 1px solid var(--line); }
+.receipt-total-lines > div:not(.summary-total) { display: flex; justify-content: space-between; color: #958679; font-size: 8px; }
+.receipt-total-lines > div > b { color: #d3c5b7; font-size: 8px; font-weight: 500; }
+.receipt-total-lines .summary-total { padding-top: 10px; font-size: 8px; }
+.receipt-total-lines .summary-total b { font-size: 13px !important; }
+.transaction-card { display: flex; align-items: center; gap: 9px; }
+.transaction-icon { width: 32px; height: 32px; display: grid; place-items: center; color: #e99b64; background: #2a1d14; border-radius: 6px; }
+.transaction-card > div { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.transaction-card > div b { color: #d7c9bb; font-size: 9px; }
+.transaction-card .text-link { font-size: 8px; }
+.receipt-aside { display: flex; flex-direction: column; gap: 12px; }
+.receipt-next { padding: 15px; }
+.receipt-next .step-icon { margin: 0 0 12px 0; }
+.receipt-next h3 { margin: 0 0 7px; font: 500 14px 'Playfair Display', Georgia, serif; }
+.receipt-next p { margin: 0 0 13px; color: #908275; font-size: 8px; line-height: 1.7; }
+.receipt-next .button { width: 100%; min-height: 34px; font-size: 8px; }
+.receipt-help { display: flex; gap: 7px; padding: 11px; color: #a38568; border: 1px solid var(--line); border-radius: 7px; font-size: 8px; line-height: 1.7; }
+.receipt-help button { color: var(--orange-light); background: none; border: 0; padding: 0; cursor: pointer; font-size: 8px; }
+.receipt-bottom-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 19px; }
+.receipt-bottom-actions .button { min-height: 34px; font-size: 8px; }
+.receipt-skeleton { min-height: 500px; border-radius: 8px; }

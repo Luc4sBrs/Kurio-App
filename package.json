@@ -1,0 +1,53 @@
+{
+  "name": "ember-marketplace",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build --mode demo",
+    "preview": "vite preview --host 0.0.0.0",
+    "typecheck": "tsc -b --pretty",
+    "lint": "eslint . --max-warnings=0",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:e2e:demo": "npm run build && node scripts/test-e2e.mjs --preview",
+    "test:e2e:ui": "node scripts/test-e2e.mjs --ui",
+    "audit": "npm run build && node scripts/audit.mjs"
+  },
+  "dependencies": {
+    "@mswjs/socket.io-binding": "latest",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-router": "^1.132.0",
+    "axios": "^1.12.2",
+    "lucide-react": "^0.468.0",
+    "msw": "^2.11.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.1",
+    "@tailwindcss/typography": "^0.5.20",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "lighthouse": "^13.5.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^6.4.1"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
+  }
+}

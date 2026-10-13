@@ -1,0 +1,218 @@
+{
+  "generatedAt": "2026-10-13T13:06:05.589Z",
+  "baseUrl": "http://127.0.0.1:4173",
+  "scenario": "standard",
+  "configVersion": 1,
+  "lighthouseVersion": "13.5.0",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v26.11.1"
+  },
+  "results": [
+    {
+      "page": "/",
+      "profile": "mobile",
+      "runs": [
+        {
+          "run": 1,
+          "scores": {
+            "performance": 93,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 2914.95,
+          "cls": 0,
+          "tbtMs": 26
+        },
+        {
+          "run": 2,
+          "scores": {
+            "performance": 92,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 2912.64,
+          "cls": 0,
+          "tbtMs": 12
+        },
+        {
+          "run": 3,
+          "scores": {
+            "performance": 91,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 3198.29,
+          "cls": 0,
+          "tbtMs": 28
+        }
+      ],
+      "medianScores": {
+        "performance": 92,
+        "accessibility": 96,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "medianLcpMs": 2914.95,
+      "medianCls": 0,
+      "medianTbtMs": 26
+    },
+    {
+      "page": "/",
+      "profile": "desktop",
+      "runs": [
+        {
+          "run": 1,
+          "scores": {
+            "performance": 100,
+            "accessibility": 97,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 671.43,
+          "cls": 0,
+          "tbtMs": 0
+        },
+        {
+          "run": 2,
+          "scores": {
+            "performance": 100,
+            "accessibility": 97,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 671.53,
+          "cls": 0,
+          "tbtMs": 0
+        },
+        {
+          "run": 3,
+          "scores": {
+            "performance": 100,
+            "accessibility": 97,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 667.09,
+          "cls": 0,
+          "tbtMs": 0
+        }
+      ],
+      "medianScores": {
+        "performance": 100,
+        "accessibility": 97,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "medianLcpMs": 671.43,
+      "medianCls": 0,
+      "medianTbtMs": 0
+    },
+    {
+      "page": "/nft/ember-001",
+      "profile": "mobile",
+      "runs": [
+        {
+          "run": 1,
+          "scores": {
+            "performance": 92,
+            "accessibility": 95,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 2914.37,
+          "cls": 0,
+          "tbtMs": 11
+        },
+        {
+          "run": 2,
+          "scores": {
+            "performance": 93,
+            "accessibility": 95,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 2914.34,
+          "cls": 0,
+          "tbtMs": 24
+        },
+        {
+          "run": 3,
+          "scores": {
+            "performance": 92,
+            "accessibility": 95,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 2912.46,
+          "cls": 0,
+          "tbtMs": 15
+        }
+      ],
+      "medianScores": {
+        "performance": 92,
+        "accessibility": 95,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "medianLcpMs": 2914.34,
+      "medianCls": 0,
+      "medianTbtMs": 15
+    },
+    {
+      "page": "/nft/ember-001",
+      "profile": "desktop",
+      "runs": [
+        {
+          "run": 1,
+          "scores": {
+            "performance": 100,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 671.14,
+          "cls": 0,
+          "tbtMs": 0
+        },
+        {
+          "run": 2,
+          "scores": {
+            "performance": 100,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 670.85,
+          "cls": 0,
+          "tbtMs": 0
+        },
+        {
+          "run": 3,
+          "scores": {
+            "performance": 100,
+            "accessibility": 96,
+            "best-practices": 100,
+            "seo": 100
+          },
+          "lcpMs": 669.66,
+          "cls": 0,
+          "tbtMs": 0
+        }
+      ],
+      "medianScores": {
+        "performance": 100,
+        "accessibility": 96,
+        "best-practices": 100,
+        "seo": 100
+      },
+      "medianLcpMs": 670.85,
+      "medianCls": 0,
+      "medianTbtMs": 0
+    }
+  ]
+}

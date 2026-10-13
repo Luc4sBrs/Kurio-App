@@ -1,0 +1,584 @@
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createRootRoute, createRoute, createRouter, Link, Outlet, RouterProvider, useNavigate, useRouterState } from '@tanstack/react-router'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpRight, BadgeCheck, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
+  Clock3, Compass, Copy, CreditCard, Gem, Heart, Image as ImageIcon, LockKeyhole, LogOut, Menu, Minus,
+  MoreHorizontal, PackageCheck, Plus, Search, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Trash2, UserRound, WalletCards, X,
+} from 'lucide-react'
+import './styles/pages/home.css'
+import './styles/pages/detail.css'
+import './styles/pages/checkout.css'
+import './styles/pages/auth.css'
+import './styles/pages/account.css'
+import './styles/pages/receipt.css'
+import './styles/pages/blog.css'
+import type { Collector, NFT, Order, SortKey } from './domain'
+import { errorMessage, getToken, service, TOKEN_KEY } from './lib/api'
+import { keys, useCart, useCatalog, useFavorites, useNFT, useQuote, useSession, useToggleFavorite } from './lib/queries'
+import { connectMarketplaceSocket, disconnectMarketplaceSocket, emitScenario, type OrderEvent, type PriceEvent } from './lib/socket'
+import type { Socket } from 'socket.io-client'
+import { Button, Dialog, Input, Select, Skeleton } from './components/ui'
+
+type SearchState = { q: string; category: string; sort: SortKey; page: number; minPrice?: string; maxPrice?: string; available?: boolean }
+type ToastMessage = { id: number; message: string; kind: 'success' | 'error' | 'info' }
+const ToastContext = createContext<(message: string, kind?: ToastMessage['kind']) => void>(() => undefined)
+const useToast = () => useContext(ToastContext)
+const categoryLabels: Record<string, string> = { All: 'Tudo', Art: 'Arte', Collectible: 'Colecionáveis', PFP: 'PFP', Photography: 'Fotografia' }
+const networkNames = ['Ethereum', 'Base', 'Polygon']
+const couponKey = 'ember-coupon'
+const initialFeaturedNFT: NFT = { id: 'ember-001', title: 'Emerald Ape #42', collection: 'Kurio Genesis', creator: 'mira.studio', category: 'PFP', priceEth: '1.19', available: 8, editionSize: 50, views: 8500, art: '/featured-ape.svg', featured: true, version: 1, createdAt: '2025-06-03T00:00:00.000Z' }
+const walletService = service as typeof service & {
+  updateWallet: (id: string, updates: { label?: string; network?: string }) => Promise<unknown>
+}
+
+function formatEth(amount: string | number) { return `${Number(amount).toFixed(2)} ETH` }
+function usdFromEth(amount: string | number) { return `$${(Number(amount) * 3_280).toLocaleString('en-US', { maximumFractionDigits: 0 })}` }
+function shortAddress(address: string) { return address.length > 16 ? `${address.slice(0, 7)}…${address.slice(-4)}` : address }
+
+function Avatar({ user, size = 'md' }: { user?: Pick<Collector, 'name' | 'avatar'> | null; size?: 'sm' | 'md' | 'lg' }) {
+  const initials = user?.avatar || user?.name?.split(/\s+/).map((part) => part[0]).join('').slice(0, 2) || '✦'
+  const isUrl = typeof initials === 'string' && initials.startsWith('http')
+  return (
+    <span className={`avatar avatar-${size}`} aria-label={user?.name ?? 'Kurio collector'}>
+      {isUrl ? <img src={initials} alt={user?.name} className="avatar-img" /> : initials}
+    </span>
+  )
+}
+
+function RootLayout() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const session = useSession()
+  const user = session.data?.user
+  const client = useQueryClient()
+  const [toast, setToast] = useState<ToastMessage | null>(null)
+  const showToast = (message: string, kind: ToastMessage['kind'] = 'info') => {
+    const id = Date.now()
+    setToast({ id, message, kind })
+    window.setTimeout(() => setToast((active) => active?.id === id ? null : active), 3800)
+  }
+
+  useEffect(() => { document.getElementById('app-boot-shell')?.remove() }, [])
+
+  useEffect(() => {
+    let socket: Socket | undefined
+    let closed = false
+    const expireSession = () => {
+      localStorage.removeItem(TOKEN_KEY)
+      for (const key of ['cart', 'favorites', 'profile', 'wallets', 'order', 'quote']) client.removeQueries({ queryKey: [key] })
+      client.setQueryData(keys.session, { user: null })
+      showToast('Sua sessão expirou. Entre novamente para continuar.', 'error')
+    }
+    window.addEventListener('ember:session-expired', expireSession)
+    const handlePrice = (raw: PriceEvent) => {
+      const current = client.getQueryData<NFT>(keys.nft(raw.id))
+      if (current && raw.version <= current.version) return
+
+      // Update specific NFT in cache
+      client.setQueryData<NFT>(keys.nft(raw.id), (current) => !current || raw.version > current.version ? raw.nft : current)
+
+      // Update NFT in catalog list without full invalidation
+      client.setQueriesData<{ items: NFT[] }>({ queryKey: ['catalog'] }, (current) =>
+        current ? { ...current, items: current.items.map((nft) => nft.id === raw.id ? raw.nft : nft) } : current
+      )
+
+      // Instead of invalidating the whole cart, we let the next 'quote' call
+      // or a specific targeted update handle it, but we still signal a change.
+      // To be perfectly safe and performant, we only invalidate the quote if the NFT is in the cart.
+      const cartLines = client.getQueryData<any>(keys.cart())?.lines ?? []
+      if (cartLines.some((line: any) => line.nftId === raw.id)) {
+        void client.invalidateQueries({ queryKey: ['quote'] })
+      }
+
+      showToast(`${raw.nft.title}: preço ou disponibilidade atualizados em tempo real.`, 'info')
+    }
+    const handleOrder = (raw: OrderEvent) => {
+      void client.invalidateQueries({ queryKey: ['order', raw.id] })
+      void client.invalidateQueries({ queryKey: ['cart'] })
+      showToast(raw.order.status === 'confirmed' ? 'Pagamento confirmado.' : 'O pagamento foi recusado.', raw.order.status === 'confirmed' ? 'success' : 'error')
+    }
+    void connectMarketplaceSocket(user?.id).then((connection) => {
+      if (closed) { disconnectMarketplaceSocket(connection); return }
+      socket = connection
+      socket.on('connect', () => {
+        void client.invalidateQueries({ queryKey: ['catalog'] })
+        void client.invalidateQueries({ queryKey: ['cart'] })
+        void client.invalidateQueries({ queryKey: ['order'] })
+      })
+      socket.on('nft.updated', handlePrice)
+      socket.on('order.updated', handleOrder)
+    })
+    return () => { closed = true; window.removeEventListener('ember:session-expired', expireSession); socket?.off('nft.updated', handlePrice); socket?.off('order.updated', handleOrder); disconnectMarketplaceSocket(socket) }
+  }, [client, user?.id])
+
+  return <ToastContext.Provider value={showToast}>
+    <div className={`app-shell ${pathname === '/login' || pathname === '/register' ? 'auth-shell' : ''}`}>
+      <Header user={user} sessionPending={session.isPending} />
+      <main id="main-content"><Outlet /></main>
+      <Footer />
+      <MobileNav />
+      <div className="toast-region" aria-live="polite" aria-atomic="true">{toast && <div className={`toast toast-${toast.kind}`} key={toast.id}><span className="toast-dot" />{toast.message}<button className="icon-button" onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={16} /></button></div>}</div>
+    </div>
+  </ToastContext.Provider>
+}
+
+function Header({ user, sessionPending }: { user?: Collector | null; sessionPending: boolean }) {
+  const cart = useCart()
+  const itemsCount = (cart.data?.lines ?? []).reduce((total, line) => total + line.quantity, 0)
+  const [search, setSearch] = useState('')
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const navigate = useNavigate()
+  return <header className="site-header">
+    <div className="header-inner">
+      <Link to="/" className="brand" aria-label="Kurio, início"><span className="brand-mark"><span /></span><span>KURIO</span></Link>
+      <nav className="main-nav" aria-label="Navegação principal"><Link to="/" className="nav-link nav-active">Explorar</Link><a className="nav-link" href="/#collections">Coleções</a><a className="nav-link" href="/#how-it-works">Como funciona</a></nav>
+      <form className="header-search" role="search" onSubmit={(event) => { event.preventDefault(); void navigate({ to: '/', search: { q: search, category: 'All', sort: 'popular', page: 1 } as never }) }}>
+        <Search size={16} aria-hidden="true" /><input type="search" aria-label="Buscar no marketplace" placeholder="Buscar arte, criadores..." value={search} onChange={(event) => setSearch(event.target.value)} /><kbd>/</kbd>
+      </form>
+      <div className="header-actions">
+        <Link to="/cart" className="header-icon" aria-label={`Carrinho, ${itemsCount} itens`}><ShoppingBag size={19} /><span className="cart-count">{itemsCount}</span></Link>
+        {sessionPending ? <Skeleton className="avatar-skeleton" /> : user ? <Link to="/profile" className="profile-shortcut" aria-label={`Perfil de ${user.name}`}><Avatar user={user} size="sm" /><ChevronDown size={13} /></Link> : <Link to="/login" className="login-link">Entrar <ArrowUpRight size={14} /></Link>}
+        <Button className="headyarn run dever-cta" size="sm" onClick={() => void navigate({ to: '/register' })}>Criar conta <ArrowRight size={15} /></Button>
+      </div>
+      <button className="mobile-search-trigger icon-button" aria-label="Abrir busca" aria-expanded={mobileSearchOpen} onClick={() => { setMobileSearchOpen((open) => !open); setMobileMenuOpen(false) }}><Search size={19} /></button>
+      <button className="mobile-menu icon-button" aria-label={mobileMenuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={mobileMenuOpen} onClick={() => { setMobileMenuOpen((open) => !open); setMobileSearchOpen(false) }}>{mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}</button>
+    </div>
+    {mobileSearchOpen && <form className="mobile-search-panel" role="search" onSubmit={(event) => { event.preventDefault(); setMobileSearchOpen(false); void navigate({ to: '/', search: { q: search, category: 'All', sort: 'popular', page: 1 } as never }) }}><Search size={16} aria-hidden="true" /><input autoFocus type="search" aria-label="Buscar no marketplace" placeholder="Buscar arte, criadores..." value={search} onChange={(event) => setSearch(event.target.value)} /><button className="icon-button" type="button" aria-label="Fechar busca" onClick={() => setMobileSearchOpen(false)}><X size={17} /></button></form>}
+    {mobileMenuOpen && <nav className="mobile-menu-panel" aria-label="Menu principal"><a href="/#collections" onClick={() => setMobileMenuOpen(false)}>Coleções</a><a href="/#how-it-works" onClick={() => setMobileMenuOpen(false)}>Como funciona</a><Link to={user ? '/profile' : '/login'} onClick={() => setMobileMenuOpen(false)}>{user ? 'Minha conta' : 'Entrar'}</Link><Link to="/register" className="mobile-register-link" onClick={() => setMobileMenuOpen(false)}>Criar conta <ArrowRight size={14} /></Link></nav>}
+  </header>
+}
+
+function Footer() {
+  return (
+    <footer className="site-footer">
+      <div className="footer-inner">
+        <div className="footer-top">
+          <div className="footer-feature">
+            <span className="feature-icon">W</span>
+            <span className="feature-title">Segurança da carteira</span>
+            <span className="feature-desc">Proteja sua carteira e colecione arte digital verificada com confiança.</span>
+          </div>
+          <div className="footer-feature">
+            <span className="feature-icon">C</span>
+            <span className="feature-title">Criadores em destaque</span>
+            <span className="feature-desc">Conheça artistas, estúdios e comunidades que moldam a cultura digital na rede.</span>
+          </div>
+          <div className="footer-feature">
+            <span className="feature-icon">D</span>
+            <span className="feature-title">Alertas de lançamentos</span>
+            <span className="feature-desc">Receba calendários de cunhagem, novidades de listas de acesso e análises do mercado.</span>
+          </div>
+          <div className="footer-newsletter">
+            <span className="newsletter-title">Antecipe-se ao próximo lançamento</span>
+            <form className="newsletter-form" onSubmit={(e) => e.preventDefault()}>
+              <input className="newsletter-input" placeholder="digite seu e-mail..." type="email" />
+              <button className="newsletter-submit">Enviar</button>
+            </form>
+            <span className="newsletter-desc">Receba lançamentos selecionados, histórias de criadores e novidades do mercado.</span>
+          </div>
+        </div>
+
+        <div className="footer-middle">
+          <div className="footer-brand-col">
+            <Link to="/" className="brand"><span className="brand-mark"><span /></span><span>KURIO</span></Link>
+            <span className="footer-brand-text">Feito para colecionadores, criadores e cultura.</span>
+          </div>
+          <div className="footer-links-col">
+            <span className="footer-links-title">Meu perfil</span>
+            <Link to="/profile" className="footer-link">Meu perfil</Link>
+            <Link to="/profile" className="footer-link">Minha coleção</Link>
+            <Link to="/profile" className="footer-link">Atividade</Link>
+            <Link to="/profile" className="footer-link">Estúdio do criador</Link>
+            <Link to="/favorites" className="footer-link">Lista de interesse</Link>
+          </div>
+          <div className="footer-links-col">
+            <span className="footer-links-title">Central de ajuda</span>
+            <a href="#" className="footer-link">Central de ajuda</a>
+            <a href="#" className="footer-link">Como comprar NFTs</a>
+            <a href="#" className="footer-link">Carteira e segurança</a>
+            <a href="#" className="footer-link">Política do mercado</a>
+            <a href="#" className="footer-link">Denunciar item</a>
+          </div>
+          <div className="footer-links-col">
+            <span className="footer-links-title">Coleções</span>
+            <a href="#" className="footer-link">Arte digital</a>
+            <a href="#" className="footer-link">Fotografia</a>
+            <a href="#" className="footer-link">Musica</a>
+            <a href="#" className="footer-link">Arte 3D</a>
+            <a href="#" className="footer-link">Utilidade</a>
+          </div>
+        </div>
+
+        <div className="footer-bottom">
+          <div className="footer-contact">
+            <span className="footer-brand-text">contato@email.com</span>
+            <span className="footer-brand-text">+55 11 4002 8922</span>
+          </div>
+          <div className="footer-socials">
+            <a href="#" className="social-btn">FB</a>
+            <a href="#" className="social-btn">IG</a>
+            <a href="#" className="social-btn">TW</a>
+            <a href="#" className="social-btn">LN</a>
+            <a href="#" className="social-btn">YT</a>
+          </div>
+          <div className="footer-wallets">
+            <span className="wallet-tag">METAMASK</span>
+            <span className="wallet-tag">WALLETCONNECT</span>
+            <span className="wallet-tag">COINBASE</span>
+          </div>
+        </div>
+        <div style={{ textAlign: 'center', marginTop: '30px', fontSize: '10px', opacity: 0.5 }}>
+          © 2026 Kurio. Propriedade digital para todos.
+        </div>
+      </div>
+    </footer>
+  )
+}
+
+function MobileNav() {
+  const path = useRouterState({ select: (state) => state.location.pathname })
+  return <nav className="mobile-bottom-nav" aria-label="Navegação mobile">
+    <Link to="/" className={path === '/' ? 'current' : ''}><Compass size={18} /><span>Início</span></Link>
+    <Link to="/favorites" className={path === '/favorites' ? 'current' : ''}><Heart size={18} /><span>Favoritos</span></Link>
+    <Link to="/cart" className={path === '/cart' ? 'current' : ''}><ShoppingBag size={18} /><span>Carrinho</span></Link>
+    <Link to="/profile" className={path.startsWith('/profile') || path === '/wallets' ? 'current' : ''}><UserRound size={18} /><span>Conta</span></Link>
+  </nav>
+}
+
+function PageFrame({ children, className = '' }: { children: ReactNode; className?: string }) { return <div className={`page-frame ${className}`}>{children}</div> }
+
+function HomePage() {
+  const rawSearch = HomeRoute.useSearch()
+  const search: SearchState = { q: rawSearch.q ?? '', category: rawSearch.category ?? 'All', sort: rawSearch.sort ?? 'popular', page: rawSearch.page ?? 1, minPrice: rawSearch.minPrice, maxPrice: rawSearch.maxPrice, available: rawSearch.available }
+  const navigate = HomeRoute.useNavigate()
+  const catalog = useCatalog(search)
+  const queryClient = useQueryClient()
+  const [showFilters, setShowFilters] = useState(false)
+  const error = catalog.isError ? errorMessage(catalog.error) : ''
+  const update = (next: Partial<SearchState>) => void navigate({ search: (previous) => ({ ...previous, ...next, page: next.page ?? 1 }) })
+  const featured = catalog.data ? catalog.data.items.find((nft) => nft.featured) ?? catalog.data.items[0] : initialFeaturedNFT
+
+  return <>
+    <PageFrame className="home-frame">
+      <section className="hero-section">
+        <div className="hero-copy">
+          <div className="eyebrow"><span className="eyebrow-line" />COLECIONE O QUE TE REPRESENTA</div>
+          <h1>Seja dono da<br /><span className="highlight">sua arte</span> digital.</h1>
+          <p className="hero-description">Encontre peças digitais únicas, criadas por artistas independentes para colecionadores de verdade.</p>
+          <div className="hero-actions"><a href="#catalog" className="button button-primary button-lg">Explorar coleção <ArrowRight size={16} /></a><a href="#how-it-works" className="text-link">Como funciona <ArrowUpRight size={15} /></a></div>
+          <div className="hero-social-proof"><div className="avatar-stack"><Avatar user={{ name: 'Mira', avatar: 'M' }} size="sm" /><Avatar user={{ name: 'Jo', avatar: 'J' }} size="sm" /><Avatar user={{ name: 'Lee', avatar: 'L' }} size="sm" /></div><div><strong>1.2k+</strong><span>colecionadores felizes</span></div><span className="proof-divider" /><div className="rating-stars">★★★★★<small>4.9/5</small></div></div>
+        </div>
+        <div className="hero-art-wrap">
+          {featured ? <div className="hero-art-card">
+            <div className="hero-art-image"><img src={featured.art} alt={`Arte ${featured.title}`} /><span className="art-edition">EDIÇÃO 01 / {featured.editionSize}</span><span className="hero-stamp"><Sparkles size={16} /> CURATED<br /><b>WITH CARE</b></span></div>
+            <div className="hero-art-meta"><div><div className="tiny-label">DESTAQUE DA SEMANA</div><h2>{featured.title}</h2><span className="creator-line"><Avatar user={{ name: featured.creator, avatar: featured.creator.slice(0, 2).toUpperCase() }} size="sm" /> {featured.creator} <BadgeCheck size={14} className="verified" /></span></div><div className="hero-price"><span>Preço atual</span><strong>{formatEth(featured.priceEth)}</strong><small>{usdFromEth(featured.priceEth)}</small></div></div>
+            <Link to="/nft/$nftId" params={{ nftId: featured.id }} className="hero-card-hit" aria-label={`Ver ${featured.title}`} />
+          </div> : <div className="hero-art-card hero-art-placeholder"><Sparkles size={26} /><span>Descobertas chegando</span></div>}
+          <div className="hero-orbit orbit-one" /><div className="hero-orbit orbit-two" />
+          <div className="hero-float-note"><span className="live-pulse" /><span><b>Curadoria humana</b><small>feito para descobrir</small></span><Sparkles size={16} /></div>
+          <span className="hero-index">01 <i /> 04</span>
+        </div>
+      </section>
+
+      <section className="stat-strip" aria-label="Marketplace em números"><div><strong>2.4k<span>+</span></strong><small>peças únicas</small></div><div><strong>180<span>+</span></strong><small>artistas independentes</small></div><div><strong>12.8<span>ETH</span></strong><small>volume nas últimas 24h</small></div><div className="stat-quote"><span className="quote-mark">“</span><span>Arte boa encontra gente boa.</span></div></section>
+
+      <section id="catalog" className="catalog-section">
+        <div className="section-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />ENCONTRE SUA PRÓXIMA PEÇA</div><h2 className="section-title">Descobertas <span className="heading-spark">✳</span></h2></div><Link to="/" search={{ q: '', category: 'All', sort: 'popular', page: 1 }} className="text-link desktop-only">Ver tudo <ArrowRight size={15} /></Link></div>
+        <div className="catalog-layout">
+          <aside className="catalog-sidebar" aria-label="Filtros do catálogo">
+            <div className="catalog-sidebar-heading"><span>Filtrar por</span><span className="filter-count">{Number(search.category !== 'All') + Number(Boolean(search.minPrice)) + Number(Boolean(search.maxPrice)) + Number(Boolean(search.available))}</span></div>
+            <div className="sidebar-filter-group"><span className="sidebar-filter-title">Categoria</span><div className="category-list" role="tablist" aria-label="Filtrar por categoria">{Object.entries(categoryLabels).map(([value, label]) => <button key={value} role="tab" aria-selected={search.category === value} className={`sidebar-category ${search.category === value ? 'active' : ''}`} onClick={() => update({ category: value })}>{label}</button>)}</div></div>
+            <div className="sidebar-filter-group"><span className="sidebar-filter-title">Preço (ETH)</span><div className="filter-price-inputs"><Input aria-label="Preço mínimo" placeholder="Mín." inputMode="decimal" value={search.minPrice ?? ''} onChange={(event) => update({ minPrice: event.target.value || undefined })} /><span>até</span><Input aria-label="Preço máximo" placeholder="Máx." inputMode="decimal" value={search.maxPrice ?? ''} onChange={(event) => update({ maxPrice: event.target.value || undefined })} /></div></div>
+            <label className="sidebar-availability"><input type="checkbox" checked={Boolean(search.available)} onChange={(event) => update({ available: event.target.checked || undefined })} /> Disponíveis agora</label>
+            <label className="sidebar-sort"><span className="sidebar-filter-title">Ordenar por</span><select aria-label="Ordenar catálogo" value={search.sort} onChange={(event) => update({ sort: event.target.value as SortKey })}><option value="popular">Mais populares</option><option value="newest">Mais recentes</option><option value="price-asc">Menor preço</option><option value="price-desc">Maior preço</option></select></label>
+            <Button variant="ghost" size="sm" className="sidebar-reset" onClick={() => { update({ minPrice: undefined, maxPrice: undefined, available: undefined, category: 'All' }); void queryClient.invalidateQueries({ queryKey: ['catalog'] }) }}>Limpar filtros</Button>
+          </aside>
+          <div className="catalog-results">
+            <div className="catalog-mobile-toolbar">
+              <div className="category-tabs" role="tablist" aria-label="Filtrar por categoria">{Object.entries(categoryLabels).map(([value, label]) => <button key={value} role="tab" aria-selected={search.category === value} className={`category-tab ${search.category === value ? 'active' : ''}`} onClick={() => update({ category: value })}>{label}</button>)}</div>
+              <div className="toolbar-controls"><button className={`filter-toggle ${showFilters ? 'active' : ''}`} onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters}><SlidersHorizontal size={15} /> Filtros <span className="filter-count">{Number(search.category !== 'All') + Number(Boolean(search.minPrice)) + Number(Boolean(search.maxPrice)) + Number(Boolean(search.available))}</span></button><label className="sort-select-wrap"><ArrowDownUp size={14} /><span className="sr-only">Ordenar por</span><select aria-label="Ordenar catálogo" value={search.sort} onChange={(event) => update({ sort: event.target.value as SortKey })}><option value="popular">Mais populares</option><option value="newest">Mais recentes</option><option value="price-asc">Menor preço</option><option value="price-desc">Maior preço</option></select><ChevronDown size={13} /></label></div>
+            </div>
+            {showFilters && <div className="filter-panel"><div><span className="filter-panel-title">Faixa de preço (ETH)</span><div className="filter-price-inputs"><Input aria-label="Preço mínimo" placeholder="Mín." inputMode="decimal" value={search.minPrice ?? ''} onChange={(event) => update({ minPrice: event.target.value || undefined })} /><span>até</span><Input aria-label="Preço máximo" placeholder="Máx." inputMode="decimal" value={search.maxPrice ?? ''} onChange={(event) => update({ maxPrice: event.target.value || undefined })} /></div></div><div><span className="filter-panel-title">Status</span><label className="check-label"><input type="checkbox" checked={Boolean(search.available)} onChange={(event) => update({ available: event.target.checked || undefined })} /> Disponíveis agora</label></div><Button variant="ghost" size="sm" onClick={() => { update({ minPrice: undefined, maxPrice: undefined, available: undefined, category: 'All' }); void queryClient.invalidateQueries({ queryKey: ['catalog'] }); setShowFilters(false) }}>Limpar filtros</Button></div>}
+            <div className="catalog-result-line"><span>{catalog.data ? `${catalog.data.total} peças encontradas` : 'Carregando peças...'}</span>{search.q && <button className="search-chip" onClick={() => update({ q: '' })}>“{search.q}” <X size={13} /></button>}<span className="result-status"><span className="live-pulse" /> preço atualizado em tempo real</span></div>
+            {catalog.isPending ? <CatalogSkeleton featured={search.q || search.category !== 'All' ? undefined : initialFeaturedNFT} /> : error ? <div className="empty-state error-state"><div className="empty-icon"><CircleHelp size={26} /></div><h3>O catálogo não carregou</h3><p>{error}</p><Button variant="secondary" onClick={() => void catalog.refetch()}>Tentar novamente <ArrowRight size={15} /></Button></div> : !catalog.data?.items.length ? <div className="empty-state"><div className="empty-icon"><Search size={25} /></div><h3>Nenhuma peça por aqui</h3><p>Tente uma busca diferente ou explore outra categoria.</p><Button variant="outline" onClick={() => void navigate({ search: { q: '', category: 'All', sort: 'popular', page: 1 } })}>Limpar busca</Button></div> : <>
+              <div className={`nft-grid ${catalog.isFetching ? 'grid-refreshing' : ''}`} aria-busy={catalog.isFetching}>{catalog.data.items.map((nft, index) => <NFTCard nft={nft} index={index} key={nft.id} />)}</div>
+              {catalog.data.pages > 1 && <div className="pagination"><span>Mostrando {Math.min((search.page - 1) * catalog.data.pageSize + 1, catalog.data.total)}–{Math.min(search.page * catalog.data.pageSize, catalog.data.total)} de {catalog.data.total}</span><div><Button variant="outline" size="sm" aria-label="Página anterior" disabled={search.page <= 1} onClick={() => update({ page: search.page - 1 })}><ChevronLeft size={16} /></Button><span className="page-number">{search.page} / {catalog.data.pages}</span><Button variant="outline" size="sm" aria-label="Próxima página" disabled={search.page >= catalog.data.pages} onClick={() => update({ page: search.page + 1 })}><ChevronRight size={16} /></Button></div></div>}
+            </>}
+          </div>
+        </div>
+      </section>
+
+      <section id="collections" className="collection-banner"><div className="collection-banner-glow" /><div><span className="eyebrow"><span className="eyebrow-line" />FEITO POR ARTISTAS</span><h2>Pequenas coleções.<br /><em>Grandes histórias.</em></h2><p>Conheça os artistas por trás das peças e encontre um mundo que combina com o seu.</p></div><div className="collection-badge"><span>✳</span><small>KURIO<br />SELECTS</small></div><a className="banner-hit" href="#catalog" aria-label="Explorar todas as coleções" /></section>
+      <section id="how-it-works" className="how-section"><div><span className="eyebrow"><span className="eyebrow-line" />SIMPLES ASSIM</span><h2>Uma coleção começa<br />com <em>uma descoberta.</em></h2></div><div className="how-steps"><div><b>01</b><span className="step-icon"><Search size={18} /></span><h3>Encontre</h3><p>Explore peças únicas de artistas independentes.</p></div><div><b>02</b><span className="step-icon"><Heart size={18} /></span><h3>Se apaixone</h3><p>Salve suas favoritas e descubra o que torna cada uma especial.</p></div><div><b>03</b><span className="step-icon"><Gem size={18} /></span><h3>Colecione</h3><p>Finalize sua compra com segurança e faça parte da história.</p></div></div></section>
+    </PageFrame>
+
+    <section className="blog-section">
+      <div className="blog-container">
+        <div className="blog-header">
+          <h2>Diário da Cunhagem</h2>
+          <p>Histórias, guias e insights para colecionadores sobre o universo da propriedade digital.</p>
+        </div>
+        <div className="blog-grid">
+          {[
+            { title: 'Como funciona a propriedade de NFTs', date: '12 de setembro', read: '6 min', excerpt: 'Aprenda a colecionar, negociar e verificar ativos digitais.', img: '/featured-ape.svg' },
+            { title: '10 artistas digitais para acompanhar', date: '13 de setembro', read: '2 min', excerpt: 'Conheça criadores que moldam a cultura digital.', img: '/featured-ape.svg' },
+            { title: 'Raridade, atributos e procedência', date: '15 de setembro', read: '3 min', excerpt: 'Entenda raridade, procedência, direitos autorais e utilidade.', img: '/featured-ape.svg' },
+            { title: 'Como proteger sua carteira', date: '15 de setembro', read: '2 min', excerpt: 'Proteja sua carteira, seus ativos e sua identidade.', img: '/featured-ape.svg' },
+          ].map((post, i) => (
+            <article key={i} className="blog-card">
+              <div className="blog-card-art"><img src={post.img} alt={post.title} /></div>
+              <div className="blog-card-content">
+                <div className="blog-meta"><span>{post.date}</span><span>Leitura de {post.read}</span></div>
+                <h3 className="blog-title">{post.title}</h3>
+                <p className="blog-excerpt">{post.excerpt}</p>
+                <a href="#" className="blog-link">Ler mais <ArrowRight size={12} /></a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+    <ScenarioControl />
+  </>
+}
+
+function CatalogSkeleton({ featured }: { featured?: NFT } = {}) { return <div className="nft-grid" aria-label="Carregando peças">{featured && <NFTCard nft={featured} index={0} />}{Array.from({ length: featured ? 7 : 8 }, (_, index) => <div className="nft-card skeleton-card" key={index}><Skeleton className="skeleton-art" /><div className="skeleton-card-body"><Skeleton className="skeleton-line short" /><Skeleton className="skeleton-line" /><Skeleton className="skeleton-line medium" /></div></div>)}</div> }
+
+function NFTCard({ nft, index = 0 }: { nft: NFT; index?: number }) {
+  const session = useSession(); const user = session.data?.user; const favorites = useFavorites(Boolean(user)); const toggle = useToggleFavorite(); const toast = useToast(); const queryClient = useQueryClient(); const navigate = useNavigate()
+  const active = favorites.data?.includes(nft.id) ?? false
+  const add = useMutation({ mutationFn: () => service.addToCart(nft.id), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['cart'] }); toast('Adicionado ao carrinho.', 'success') }, onError: (error) => toast(errorMessage(error), 'error') })
+  const toggleLike = () => {
+    if (!user) { void navigate({ to: '/login', search: { returnTo: window.location.pathname } as never }); return }
+    toggle.mutate({ id: nft.id, active: !active }, { onError: (error) => toast(errorMessage(error), 'error') })
+  }
+  return <article className="nft-card" style={{ animationDelay: `${Math.min(index * 35, 280)}ms` }}>
+    <div className="nft-card-art"><Link to="/nft/$nftId" params={{ nftId: nft.id }} aria-label={`Ver ${nft.title}`}><img src={nft.art} alt={`Arte digital ${nft.title}`} loading={index > 3 ? 'lazy' : 'eager'} /></Link><span className="card-category">{categoryLabels[nft.category]}</span><button className={`favorite-button ${active ? 'favorited' : ''}`} aria-label={active ? `Remover ${nft.title} dos favoritos` : `Adicionar ${nft.title} aos favoritos`} aria-pressed={active} onClick={toggleLike} disabled={session.isPending || toggle.isPending}><Heart size={16} fill={active ? 'currentColor' : 'none'} /></button><button className="quick-add" aria-label={`Adicionar ${nft.title} ao carrinho`} onClick={() => add.mutate()} disabled={add.isPending}><Plus size={16} /></button></div>
+    <div className="nft-card-body"><div className="card-collection-line"><span>{nft.collection}</span><BadgeCheck size={13} className="verified" /></div><Link to="/nft/$nftId" params={{ nftId: nft.id }} className="card-title">{nft.title}</Link><div className="card-footer"><span className="card-creator"><span className="creator-avatar">{nft.creator.slice(0, 1).toUpperCase()}</span>{nft.creator}</span><span className="card-price">{formatEth(nft.priceEth)}</span></div><div className="card-bottom-meta"><span><span className="availability-dot" /> {nft.available} disponíveis</span><span>{usdFromEth(nft.priceEth)}</span></div></div>
+  </article>
+}
+
+function NFTDetailPage() {
+  const { nftId } = NFTRoute.useParams(); const detail = useNFT(nftId); const session = useSession(); const user = session.data?.user; const favorites = useFavorites(Boolean(user)); const toggle = useToggleFavorite(); const cart = useCart(); const queryClient = useQueryClient(); const toast = useToast(); const navigate = useNavigate()
+  const [quantity, setQuantity] = useState(1)
+  const nft = detail.data ?? (nftId === initialFeaturedNFT.id ? initialFeaturedNFT : undefined)
+  const active = favorites.data?.includes(nftId) ?? false
+  const add = useMutation({ mutationFn: () => service.addToCart(nftId, quantity), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['cart'] }); toast(`${quantity} ${quantity === 1 ? 'peça adicionada' : 'peças adicionadas'} ao carrinho.`, 'success') }, onError: (error) => toast(errorMessage(error), 'error') })
+  if (detail.isPending && !nft) return <PageFrame className="detail-frame"><div className="detail-layout"><Skeleton className="detail-skeleton-art" /><div className="detail-skeleton-info"><Skeleton className="skeleton-line short" /><Skeleton className="skeleton-line" /><Skeleton className="skeleton-line medium" /><Skeleton className="skeleton-line" /></div></div></PageFrame>
+  if (detail.isError || !nft) return <PageFrame><div className="empty-state detail-not-found"><div className="empty-icon"><ImageIcon size={24} /></div><h1>Esta peça não foi encontrada</h1><p>O link pode estar incorreto ou a peça pode não estar mais disponível.</p><Link className="button button-primary" to="/">Voltar para explorar <ArrowLeft size={16} /></Link></div></PageFrame>
+  const inCart = cart.data?.lines.find((line) => line.nftId === nft.id)?.quantity ?? 0
+  const noInventory = nft.available === 0
+  return <PageFrame className="detail-frame">
+    <div className="breadcrumb"><Link to="/">Explorar</Link><ChevronRight size={13} /><span>{nft.collection}</span><ChevronRight size={13} /><span>{nft.title}</span></div>
+    <div className="detail-layout">
+      <div className="detail-gallery"><div className="detail-main-art"><Dialog trigger={<button className="zoom-art-button" aria-label="Ampliar arte"><img src={nft.art} alt={`Arte de ${nft.title}`} /><span><ImageIcon size={14} /> ampliar</span></button>} title={nft.title} description={`Arte da coleção ${nft.collection}`} contentClassName="art-dialog"><img src={nft.art} alt={`Arte de ${nft.title} em tamanho ampliado`} className="dialog-art" /></Dialog><span className="gallery-edition">1 / 1</span></div><div className="detail-thumbs"><button className="thumb active"><img src={nft.art} alt="Miniatura da peça" /></button><div className="thumb-note"><Sparkles size={15} /><span>Uma peça única<br /><b>selecionada para você</b></span></div><button className="share-button" onClick={() => { void navigator.clipboard?.writeText(window.location.href); toast('Link copiado.', 'success') }}><Copy size={15} /><span>Copiar link</span></button></div></div>
+      <div className="detail-info"><div className="detail-kicker"><span className="eyebrow-line" />{nft.collection} <BadgeCheck size={14} className="verified" /><span className="detail-tag">{categoryLabels[nft.category]}</span></div><h1>{nft.title}</h1><p className="detail-subtitle">Uma peça que conta uma história. Criada com cuidado e disponível em edição limitada.</p><div className="creator-card"><Avatar user={{ name: nft.creator, avatar: nft.creator.slice(0, 2).toUpperCase() }} /><div><span>CRIADO POR</span><b>{nft.creator}</b></div><button className="creator-follow" onClick={() => toast('Perfil do artista em breve.', 'info')}>Ver perfil <ArrowUpRight size={13} /></button></div>
+        <div className="detail-price-card"><div><span>PREÇO ATUAL</span><strong>{formatEth(nft.priceEth)}</strong><small>≈ {usdFromEth(nft.priceEth)} <span>· sem ofertas</span></small></div><div className="price-change"><span><span className="live-pulse" /> AO VIVO</span><b>{nft.available} <small>de {nft.editionSize} disponíveis</small></b></div></div>
+        <div className="detail-actions"><div className="quantity-control" aria-label="Selecionar quantidade"><button aria-label="Diminuir quantidade" onClick={() => setQuantity((value) => Math.max(1, value - 1))} disabled={quantity <= 1}><Minus size={15} /></button><span aria-live="polite">{quantity}</span><button aria-label="Aumentar quantidade" onClick={() => setQuantity((value) => Math.min(nft.available, value + 1))} disabled={quantity >= nft.available}><Plus size={15} /></button></div><Button size="lg" className="detail-add" disabled={noInventory || add.isPending} onClick={() => add.mutate()}>{noInventory ? 'Esgotado' : add.isPending ? 'Adicionando...' : 'Adicionar ao carrinho'} <ShoppingBag size={17} /></Button><button className={`detail-favorite ${active ? 'favorited' : ''}`} aria-label={active ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={active} disabled={session.isPending || toggle.isPending} onClick={() => { if (!user) { void navigate({ to: '/login', search: { returnTo: window.location.pathname } as never }); return } toggle.mutate({ id: nft.id, active: !active }, { onError: (error) => toast(errorMessage(error), 'error') }) }}><Heart size={17} fill={active ? 'currentColor' : 'none'} /></button></div>
+        {inCart > 0 && <div className="inline-success"><Check size={15} /> Você já tem {inCart} no carrinho. <Link to="/cart">Ver carrinho <ArrowRight size={13} /></Link></div>}
+        <div className="detail-assurance"><div><ShieldCheck size={16} /><span><b>Compra protegida</b><small>simulação segura para demonstração</small></span></div><div><Clock3 size={16} /><span><b>Disponibilidade limitada</b><small>estoque sincronizado em tempo real</small></span></div></div>
+        <div className="details-accordion"><details open><summary>Sobre a peça <ChevronDown size={15} /></summary><p>Parte da coleção <b>{nft.collection}</b>, esta edição digital foi criada por {nft.creator}. Cada compra registra uma cópia numerada para sua coleção.</p></details><details><summary>Detalhes e atributos <ChevronDown size={15} /></summary><div className="attributes"><span>Rede <b>Ethereum</b></span><span>Padrão <b>ERC-721</b></span><span>Edição <b>{nft.editionSize} cópias</b></span></div></details></div>
+      </div>
+    </div>
+    <section className="more-from-collection"><div className="section-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />CONTINUE DESCOBRINDO</div><h2 className="section-title">Mais para se apaixonar</h2></div><Link to="/" search={{ q: '', category: 'All', sort: 'popular', page: 1 }} className="text-link">Ver catálogo <ArrowRight size={15} /></Link></div><div className="nft-grid compact-grid">{(queryClient.getQueryData<{ items: NFT[] }>(['catalog', { q: '', category: 'All', sort: 'popular', page: 1 }])?.items ?? []).filter((item) => item.id !== nft.id).slice(0, 4).map((item, index) => <NFTCard nft={item} index={index} key={item.id} />)}</div></section>
+    <ScenarioControl focusNft={nft} />
+  </PageFrame>
+}
+
+function CartPage() {
+  const cart = useCart(); const toast = useToast(); const client = useQueryClient(); const navigate = useNavigate()
+  const [couponInput, setCouponInput] = useState(() => localStorage.getItem(couponKey) ?? '')
+  const [appliedCoupon, setAppliedCoupon] = useState(() => localStorage.getItem(couponKey) ?? '')
+  const coupon = couponInput
+  const setCoupon = setCouponInput
+  const lines = cart.data?.lines ?? []
+  const quote = useQuote(lines, appliedCoupon)
+  const remove = useMutation({ mutationFn: service.removeFromCart, onSuccess: () => { void client.invalidateQueries({ queryKey: ['cart'] }); toast('Item removido do carrinho.', 'info') }, onError: (error) => toast(errorMessage(error), 'error') })
+  const quantity = useMutation({ mutationFn: ({ id, count }: { id: string; count: number }) => service.setQuantity(id, count), onSuccess: () => void client.invalidateQueries({ queryKey: ['cart'] }), onError: (error) => { toast(errorMessage(error), 'error'); void client.invalidateQueries({ queryKey: ['cart'] }) } })
+  const applyCoupon = async () => {
+    if (!couponInput.trim()) { localStorage.removeItem(couponKey); setAppliedCoupon(''); toast('Cupom removido.', 'info'); return }
+    try { const result = await service.quote(lines, couponInput); localStorage.setItem(couponKey, couponInput.trim().toUpperCase()); setAppliedCoupon(couponInput.trim().toUpperCase()); client.setQueryData(keys.quote(lines, couponInput.trim().toUpperCase()), result); toast('Cupom aplicado. Você ganhou 10% de desconto.', 'success') }
+    catch (error) { toast(errorMessage(error), 'error') }
+  }
+  const cartNFTs = cart.data?.nfts ?? []
+  const quoteData = quote.data ?? cart.data?.quote
+  if (cart.isPending) return <PageFrame className="cart-frame"><Skeleton className="page-title-skeleton" /><div className="cart-layout"><Skeleton className="cart-list-skeleton" /><Skeleton className="cart-summary-skeleton" /></div></PageFrame>
+  return <PageFrame className="cart-frame"><div className="page-eyebrow"><Link to="/">Explorar</Link><ChevronRight size={13} /> Carrinho</div><div className="cart-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SUA SELEÇÃO</div><h1 className="page-title">Carrinho <span>{lines.reduce((sum, line) => sum + line.quantity, 0)}</span></h1><p>Peças especiais esperando para fazer parte da sua coleção.</p></div><Link to="/" className="continue-link"><ArrowLeft size={14} /> Continuar explorando</Link></div>
+    {!lines.length ? <div className="empty-cart"><div className="empty-cart-art"><ShoppingBag size={33} /></div><span className="eyebrow"><span className="eyebrow-line" />SUA PRÓXIMA DESCOBERTA ESTÁ LÁ FORA</span><h2>Seu carrinho está esperando<br /><em>por uma boa história.</em></h2><p>Explore peças feitas por artistas independentes e encontre algo que fale com você.</p><Link to="/" className="button button-primary button-lg">Explorar catálogo <ArrowRight size={16} /></Link><div className="empty-cart-foot"><ShieldCheck size={15} /> Compra protegida · sem compromisso</div></div> : <div className="cart-layout"><div className="cart-items-column"><div className="cart-list-head"><span>PEÇAS SELECIONADAS</span><span>{lines.length} {lines.length === 1 ? 'item' : 'itens'}</span></div>{lines.map((line) => { const nft = cartNFTs.find((item) => item?.id === line.nftId); if (!nft) return null; return <article className="cart-item" key={line.nftId}><Link to="/nft/$nftId" params={{ nftId: nft.id }} className="cart-item-art"><img src={nft.art} alt={`Arte de ${nft.title}`} /></Link><div className="cart-item-info"><span className="card-collection-line">{nft.collection} <BadgeCheck size={12} className="verified" /></span><Link to="/nft/$nftId" params={{ nftId: nft.id }} className="cart-item-title">{nft.title}</Link><span className="cart-item-creator">por {nft.creator}</span><div className="cart-item-mobile-price">{formatEth(nft.priceEth)} <span>/ unidade</span></div><div className="quantity-control cart-quantity"><button aria-label={`Diminuir ${nft.title}`} disabled={line.quantity <= 1 || quantity.isPending} onClick={() => quantity.mutate({ id: nft.id, count: line.quantity - 1 })}><Minus size={14} /></button><span>{line.quantity}</span><button aria-label={`Aumentar ${nft.title}`} disabled={line.quantity >= nft.available || quantity.isPending} onClick={() => quantity.mutate({ id: nft.id, count: line.quantity + 1 })}><Plus size={14} /></button></div></div><div className="cart-item-price"><span>PREÇO</span><b>{formatEth(nft.priceEth)}</b><small>{usdFromEth(nft.priceEth)}</small></div><div className="cart-item-total"><span>TOTAL</span><b>{formatEth((Number(nft.priceEth) * line.quantity).toFixed(2))}</b></div><button className="cart-remove icon-button" aria-label={`Remover ${nft.title}`} onClick={() => remove.mutate(nft.id)} disabled={remove.isPending}><Trash2 size={16} /></button></article> })}<div className="coupon-card"><div className="coupon-icon"><Sparkles size={17} /></div><div className="coupon-copy"><b>Tem um código de desconto?</b><span>Use KURIO10 para ganhar 10% de desconto.</span></div><div className="coupon-entry"><input aria-label="Código de desconto" value={coupon} onChange={(event) => setCoupon(event.target.value.toUpperCase())} placeholder="CÓDIGO" /><Button variant="outline" size="sm" onClick={() => void applyCoupon()}>Aplicar</Button></div></div></div>
+      <aside className="summary-card"><div className="summary-title-row"><h2>Resumo do pedido</h2><span><LockKeyhole size={13} /> seguro</span></div><div className="summary-lines"><div><span>Subtotal</span><b>{formatEth(quoteData?.subtotal ?? '0')}</b></div><div><span>Taxa da rede <CircleHelp size={13} /></span><b>{formatEth(quoteData?.networkFee ?? '0')}</b></div>{quoteData?.discount && Number(quoteData.discount) > 0 && <div className="discount-line"><span>Desconto {quoteData.coupon && <small>({quoteData.coupon})</small>}</span><b>−{formatEth(quoteData.discount)}</b></div>}<div className="summary-total"><span>Total estimado</span><b>{formatEth(quoteData?.total ?? '0')}</b><small>≈ {usdFromEth(quoteData?.total ?? '0')}</small></div></div>{quote.isError && <p className="inline-error">{errorMessage(quote.error)}</p>}<Button size="lg" className="checkout-button" onClick={() => { if (!getToken()) { void navigate({ to: '/login', search: { returnTo: '/checkout' } as never }); return } void navigate({ to: '/checkout' }) }}>Continuar para pagamento <ArrowRight size={16} /></Button><div className="summary-trust"><ShieldCheck size={15} /><span>Pagamento simulado e protegido.<br />Você revisa tudo antes de confirmar.</span></div><div className="payment-icons"><span>ETH</span><span>BASE</span><span>POLYGON</span></div></aside></div>}
+    <ScenarioControl />
+  </PageFrame>
+}
+
+function Protected({ children }: { children: ReactNode }) {
+  const session = useSession(); const navigate = useNavigate()
+  useEffect(() => { if (!session.isPending && !session.data?.user) void navigate({ to: '/login', search: { returnTo: window.location.pathname } as never }) }, [session.isPending, session.data?.user, navigate])
+  if (session.isPending || !session.data?.user) return <PageFrame className="private-loading"><Skeleton className="page-title-skeleton" /><Skeleton className="private-content-skeleton" /></PageFrame>
+  return <>{children}</>
+}
+
+function CheckoutPage() {
+  return <Protected><CheckoutForm /></Protected>
+}
+function CheckoutForm() {
+  const session = useSession(); const cart = useCart(); const walletQuery = useQuery({ queryKey: keys.wallets(), queryFn: service.wallets }); const toast = useToast(); const client = useQueryClient(); const navigate = useNavigate()
+  const [name, setName] = useState(session.data?.user?.name ?? '')
+  const [email, setEmail] = useState(session.data?.user?.email ?? '')
+  const [walletId, setWalletId] = useState('')
+  const [network, setNetwork] = useState('Ethereum')
+  const [coupon] = useState(() => localStorage.getItem(couponKey) ?? '')
+  const [reviewed, setReviewed] = useState('')
+  const [fieldError, setFieldError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const pendingKey = useRef(localStorage.getItem('ember-pending-idempotency') ?? '')
+  const lines = cart.data?.lines ?? []
+  const quote = useQuote(lines, coupon)
+  const quoteData = quote.data ?? cart.data?.quote
+  const reviewKey = quoteData ? `${quoteData.total}:${quoteData.version}` : ''
+  useEffect(() => { if (!name && session.data?.user?.name) setName(session.data.user.name); if (!email && session.data?.user?.email) setEmail(session.data.user.email) }, [session.data?.user, name, email])
+  useEffect(() => { if (!walletId && walletQuery.data?.length) { const primary = walletQuery.data.find((item) => item.primary) ?? walletQuery.data[0]; setWalletId(primary.id); setNetwork(primary.network) } }, [walletQuery.data, walletId])
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setFieldError('')
+    if (!name.trim() || !/^\S+@\S+\.\S+$/.test(email)) { setFieldError('Informe seu nome e um e-mail válido.'); return }
+    if (!walletId) { setFieldError('Adicione ou selecione uma carteira para continuar.'); return }
+    if (!reviewed || reviewed !== reviewKey) { setReviewed(reviewKey); toast(reviewed ? 'Os valores foram atualizados. Revise o novo resumo antes de confirmar.' : 'Revise o resumo e confirme quando estiver tudo certo.', 'info'); return }
+    setBusy(true)
+    try {
+      const latest = await service.quote(lines, coupon || undefined)
+      if (latest.total !== quoteData?.total || latest.version !== quoteData?.version) {
+        client.setQueryData(keys.quote(lines, coupon), latest); setReviewed(''); toast('Preço ou disponibilidade mudou. Revise o pedido antes de confirmar.', 'info'); return
+      }
+      pendingKey.current ||= crypto.randomUUID(); localStorage.setItem('ember-pending-idempotency', pendingKey.current)
+      const body = { lines, coupon: coupon || undefined, walletId, quoteVersion: latest.version }
+      let order: Order
+      try { order = await service.createOrder(body, pendingKey.current) }
+      catch (error) {
+        if ((error as { response?: { status?: number } })?.response?.status === 504) order = await service.createOrder(body, pendingKey.current)
+        else throw error
+      }
+      localStorage.removeItem('ember-pending-idempotency')
+      void client.invalidateQueries({ queryKey: ['cart'] })
+      void navigate({ to: '/order/$orderId', params: { orderId: order.id } })
+    } catch (error) { toast(errorMessage(error), 'error'); if ((error as { response?: { status?: number } })?.response?.status === 409) { void client.invalidateQueries({ queryKey: ['cart'] }); void quote.refetch(); setReviewed('') } }
+    finally { setBusy(false) }
+  }
+  if (cart.isPending || walletQuery.isPending) return <PageFrame className="checkout-frame"><Skeleton className="page-title-skeleton" /><div className="checkout-layout"><Skeleton className="checkout-form-skeleton" /><Skeleton className="cart-summary-skeleton" /></div></PageFrame>
+  if (!lines.length) return <PageFrame className="empty-checkout"><div className="empty-icon"><ShoppingBag size={22} /></div><h1>Não há itens para pagar</h1><p>Adicione uma peça ao carrinho e volte para finalizar sua compra.</p><Link to="/" className="button button-primary">Explorar catálogo <ArrowRight size={15} /></Link></PageFrame>
+  return <PageFrame className="checkout-frame"><div className="page-eyebrow"><Link to="/cart">Carrinho</Link><ChevronRight size={13} /> Pagamento</div><div className="cart-heading"><div><div className="eyebrow"><span className="eyebrow-line" />QUASE NA SUA COLEÇÃO</div><h1 className="page-title">Finalizar compra</h1><p>Seus dados ficam salvos apenas nesta demonstração.</p></div><div className="checkout-steps"><span className="done"><Check size={13} /> Carrinho</span><i /><span className="current">2 · Pagamento</span><i /><span>3 · Confirmação</span></div></div><div className="checkout-layout"><form className="checkout-form" onSubmit={(event) => void submit(event)} noValidate>
+      <section className="form-section"><div className="form-section-heading"><span className="form-section-number">01</span><div><h2>Dados do colecionador</h2><p>Para manter seu recibo associado à sua conta.</p></div></div><div className="form-grid"><Input label="Nome completo" id="checkout-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Seu nome" required /><Input label="E-mail" id="checkout-email" autoComplete="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="voce@email.com" required /></div></section>
+      <section className="form-section"><div className="form-section-heading"><span className="form-section-number">02</span><div><h2>Carteira de pagamento</h2><p>Escolha uma carteira simulada para concluir.</p></div></div>{walletQuery.data?.length ? <div className="wallet-select-list">{walletQuery.data.map((wallet) => <label className={`wallet-option ${walletId === wallet.id ? 'selected' : ''}`} key={wallet.id}><input type="radio" name="wallet" value={wallet.id} checked={walletId === wallet.id} onChange={() => { setWalletId(wallet.id); setNetwork(wallet.network) }} /><span className="wallet-option-icon"><WalletCards size={18} /></span><span className="wallet-option-copy"><b>{wallet.label}</b><small>{shortAddress(wallet.address)} · {wallet.network}</small></span>{wallet.primary && <span className="primary-pill">PRINCIPAL</span>}<span className="wallet-radio" /></label>)}</div> : <div className="no-wallet"><WalletCards size={18} /><span>Você ainda não cadastrou uma carteira.</span><Link to="/wallets">Adicionar carteira <ArrowRight size={13} /></Link></div>}<div className="network-row"><Select id="checkout-network" label="Rede" value={network} onChange={(event) => setNetwork(event.target.value)}>{networkNames.map((value) => <option key={value}>{value}</option>)}</Select><div className="wallet-connect"><span className="connection-dot" /><span>Carteira simulada desconectada</span><Button variant="outline" size="sm" type="button" onClick={() => toast('Conexão simulada estabelecida.', 'success')}>Conectar</Button></div></div></section>
+      <section className="form-section"><div className="form-section-heading"><span className="form-section-number">03</span><div><h2>Revisão final</h2><p>Confira os itens, taxas e o total antes de confirmar.</p></div></div><div className="review-items">{lines.map((line) => { const nft = cart.data?.nfts.find((item) => item.id === line.nftId); if (!nft) return null; return <div key={line.nftId} className="review-item"><img src={nft.art} alt="" /><span><b>{nft.title}</b><small>{line.quantity} × {formatEth(nft.priceEth)}</small></span><strong>{formatEth(Number(nft.priceEth) * line.quantity)}</strong></div> })}</div></section>
+      {fieldError && <p className="form-alert" role="alert">{fieldError}</p>}{quote.isError && <p className="form-alert" role="alert">{errorMessage(quote.error)}</p>}
+      <div className="checkout-actions"><Link to="/cart" className="continue-link"><ArrowLeft size={14} /> Voltar ao carrinho</Link><Button size="lg" type="submit" disabled={busy || quote.isPending || !walletId}>{busy ? 'Validando...' : reviewed === reviewKey ? 'Confirmar pedido' : 'Revisar pedido'} {reviewed === reviewKey ? <ShieldCheck size={16} /> : <ArrowRight size={16} />}</Button></div>
+      <div className="secure-note"><LockKeyhole size={14} /> Pedido simulado com dados de demonstração. Nenhum pagamento real será processado.</div>
+    </form><aside className="summary-card checkout-summary"><div className="summary-title-row"><h2>Resumo do pedido</h2><span><LockKeyhole size={13} /> seguro</span></div><div className="summary-lines"><div><span>Subtotal</span><b>{formatEth(quoteData?.subtotal ?? '0')}</b></div><div><span>Taxa da rede <CircleHelp size={13} /></span><b>{formatEth(quoteData?.networkFee ?? '0')}</b></div>{Number(quoteData?.discount ?? 0) > 0 && <div className="discount-line"><span>Desconto ({quoteData?.coupon})</span><b>−{formatEth(quoteData?.discount ?? '0')}</b></div>}<div className="summary-total"><span>Total estimado</span><b>{formatEth(quoteData?.total ?? '0')}</b><small>≈ {usdFromEth(quoteData?.total ?? '0')}</small></div></div><div className="quote-validity"><span className="live-pulse" /> cotação atualizada agora</div><div className="summary-trust"><ShieldCheck size={15} /><span>A confirmação acontece somente depois<br />da resposta do pedido simulado.</span></div></aside></div><ScenarioControl /></PageFrame>
+}
+
+function OrderPage() {
+  return <Protected><OrderReceipt /></Protected>
+}
+function OrderReceipt() {
+  const { orderId } = OrderRoute.useParams(); const query = useQuery({ queryKey: keys.order(orderId), queryFn: () => service.order(orderId), refetchInterval: (data) => data.state.data?.status === 'pending' ? 4000 : false }); const toast = useToast(); const client = useQueryClient()
+  if (query.isPending) return <PageFrame className="order-frame"><Skeleton className="receipt-skeleton" /></PageFrame>
+  if (query.isError || !query.data) return <PageFrame><div className="empty-state"><h1>Não encontramos este pedido</h1><p>Confira o identificador ou volte ao seu perfil.</p><Link className="button button-primary" to="/profile">Minha conta</Link></div></PageFrame>
+  const order = query.data
+  const confirmed = order.status === 'confirmed'; const declined = order.status === 'declined'
+  return <PageFrame className="order-frame"><div className={`receipt-status ${confirmed ? 'confirmed' : declined ? 'declined' : 'pending'}`}><span className="receipt-status-icon">{confirmed ? <Check size={27} /> : declined ? <X size={27} /> : <Clock3 size={26} />}</span><div><span>{confirmed ? 'COMPRA CONCLUÍDA' : declined ? 'PAGAMENTO RECUSADO' : 'PEDIDO EM PROCESSAMENTO'}</span><h1>{confirmed ? 'Uma nova história começa.' : declined ? 'Não foi dessa vez.' : 'Estamos confirmando sua compra.'}</h1><p>{confirmed ? 'Sua peça agora faz parte da sua coleção. Obrigado por apoiar artistas independentes.' : declined ? 'O pagamento simulado foi recusado. Seus itens continuam no carrinho.' : 'Seu pedido está pendente. Você pode voltar a esta página sem criar outra compra.'}</p></div></div>
+    {!confirmed && !declined && <div className="pending-card"><span className="live-pulse" /> Aguardando resposta da simulação <Button variant="outline" size="sm" onClick={() => { emitScenario('scenario:order', order.id, 'confirmed'); window.setTimeout(() => void client.invalidateQueries({ queryKey: keys.order(order.id) }), 500) }}>Simular confirmação</Button><Button variant="ghost" size="sm" onClick={() => { emitScenario('scenario:order', order.id, 'declined'); window.setTimeout(() => void client.invalidateQueries({ queryKey: keys.order(order.id) }), 500) }}>Recusar</Button></div>}
+    <div className="receipt-layout"><section className="receipt-main"><div className="receipt-card"><div className="receipt-heading"><div><span className="eyebrow"><span className="eyebrow-line" />RECIBO DIGITAL</span><h2>Detalhes do pedido</h2></div><span className={`order-pill ${order.status}`}>{order.status === 'pending' ? 'Pendente' : order.status === 'confirmed' ? 'Confirmado' : 'Recusado'}</span></div><div className="receipt-meta"><div><span>NÚMERO DO PEDIDO</span><b>{order.id}</b></div><div><span>DATA</span><b>{new Date(order.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}</b></div></div><div className="receipt-items">{order.lines.map((line) => { const nft = order.items.find((item) => item.id === line.nftId); if (!nft) return null; return <div className="receipt-item" key={line.nftId}><img src={nft.art} alt={`Arte de ${nft.title}`} /><span><b>{nft.title}</b><small>{nft.collection} · qtd. {line.quantity}</small></span><strong>{formatEth(Number(nft.priceEth) * line.quantity)}</strong></div> })}</div><div className="receipt-total-lines"><div><span>Subtotal</span><b>{formatEth(order.quote.subtotal)}</b></div>{Number(order.quote.discount) > 0 && <div className="discount-line"><span>Desconto</span><b>−{formatEth(order.quote.discount)}</b></div>}<div><span>Taxa de rede</span><b>{formatEth(order.quote.networkFee)}</b></div><div className="summary-total"><span>Total pago</span><b>{formatEth(order.quote.total)}</b></div></div></div><div className="transaction-card"><span className="transaction-icon"><CreditCard size={17} /></span><div><span>REFERÊNCIA DA TRANSAÇÃO</span><b>{shortAddress(order.transaction)}</b></div><button className="icon-button" aria-label="Copiar referência" onClick={() => { void navigator.clipboard?.writeText(order.transaction); toast('Referência copiada.', 'success') }}><Copy size={15} /></button><a href="#transaction-simulation" className="text-link">Ver transação <ArrowUpRight size={13} /></a></div></section><aside className="receipt-aside"><div className="receipt-next"><span className="step-icon"><PackageCheck size={19} /></span><h3>Cuide da sua coleção</h3><p>Encontre seus itens comprados no seu perfil sempre que quiser.</p><Link to="/profile" className="button button-secondary">Ir para meu perfil <ArrowRight size={15} /></Link></div><div className="receipt-help"><CircleHelp size={15} /><span>Precisa de ajuda?<br /><button onClick={() => toast('O suporte não faz parte desta demonstração.', 'info')}>Fale com a gente</button></span></div></aside></div><div className="receipt-bottom-actions"><Link to="/" className="button button-outline"><ArrowLeft size={15} /> Voltar ao catálogo</Link>{confirmed && <Link to="/profile" className="text-link">Ver minha coleção <ArrowRight size={14} /></Link>}</div><ScenarioControl /></PageFrame>
+}
+
+function LoginPage() {
+  const search = LoginRoute.useSearch(); const navigate = useNavigate(); const client = useQueryClient(); const toast = useToast()
+  const [email, setEmail] = useState('demo@kurio.art'); const [password, setPassword] = useState('ember123'); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(''); setBusy(true); try { const result = await service.login(email, password); const previous = getToken(); if (previous !== result.token) client.clear(); localStorage.setItem(TOKEN_KEY, result.token); client.setQueryData(keys.session, { user: result.user }); toast(`Bem-vinda de volta, ${result.user.name.split(' ')[0]}.`, 'success'); void navigate({ to: (search.returnTo || '/') as never }) } catch (reason) { setError(errorMessage(reason)) } finally { setBusy(false) } }
+  return <PageFrame className="auth-frame"><div className="auth-aside"><div className="auth-art-mark"><span className="auth-sun" /><span className="auth-orbit" /></div><span className="eyebrow"><span className="eyebrow-line" />EMERSON'S PICK</span><blockquote>“Colecionar é guardar um pedaço daquilo que faz a gente sentir.”</blockquote><div className="auth-aside-foot"><Avatar user={{ name: 'Mira Sol', avatar: 'MS' }} /><span><b>Mira Sol</b><small>Artista independente</small></span><span className="verified-mark"><BadgeCheck size={15} /></span></div></div><div className="auth-card"><Link to="/" className="brand auth-brand" aria-label="Kurio, início"><span className="brand-mark"><span /></span><span>KURIO</span></Link><Link to="/" className="back-link"><ArrowLeft size={14} /> Voltar para explorar</Link><span className="auth-eyebrow">QUE BOM TER VOCÊ DE VOLTA</span><h1>Entre na sua<br /><em>coleção.</em></h1><p>Faça login para encontrar suas peças favoritas.</p><form onSubmit={(event) => void submit(event)} className="auth-form"><Input label="E-mail" id="login-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /><Input label="Senha" id="login-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />{error && <p className="form-alert" role="alert">{error}</p>}<button className="forgot-link" type="button" onClick={() => toast('Use as credenciais fictícias exibidas nesta página.', 'info')}>Esqueceu sua senha?</button><Button size="lg" className="auth-submit" disabled={busy}>{busy ? 'Entrando...' : 'Entrar na minha conta'} <ArrowRight size={16} /></Button></form><div className="auth-divider"><span /> ou continue com <span /></div><Button variant="outline" size="lg" className="wallet-login" onClick={() => toast('Conexão de carteira simulada indisponível nesta tela.', 'info')}><WalletCards size={17} /> Conectar carteira</Button><p className="auth-switch">Ainda não tem conta? <Link to="/register" search={{ returnTo: search.returnTo }}>Criar conta <ArrowRight size={13} /></Link></p><div className="demo-hint"><Sparkles size={14} /><span>Conta de demonstração: <b>demo@kurio.art</b> / <b>ember123</b></span></div></div></PageFrame>
+}
+
+function RegisterPage() {
+  const search = RegisterRoute.useSearch(); const navigate = useNavigate(); const client = useQueryClient(); const toast = useToast()
+  const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => { event.preventDefault(); setError(''); setBusy(true); try { const result = await service.register(name, email, password); client.clear(); localStorage.setItem(TOKEN_KEY, result.token); client.setQueryData(keys.session, { user: result.user }); toast('Sua conta está pronta. Boas descobertas!', 'success'); void navigate({ to: (search.returnTo || '/') as never }) } catch (reason) { setError(errorMessage(reason)) } finally { setBusy(false) } }
+  return <PageFrame className="auth-frame register-frame"><div className="auth-aside register-aside"><div className="auth-art-mark"><span className="auth-sun" /><span className="auth-orbit" /></div><span className="eyebrow"><span className="eyebrow-line" />SEU PRÓXIMO CAPÍTULO</span><blockquote>“Uma peça pode mudar a forma como você vê o seu espaço.”</blockquote><div className="auth-aside-foot"><Avatar user={{ name: 'Jo', avatar: 'J' }} /><span><b>João K.</b><small>Colecionador KURIO</small></span><span className="verified-mark"><Sparkles size={15} /></span></div></div><div className="auth-card"><Link to="/" className="brand auth-brand" aria-label="Kurio, início"><span className="brand-mark"><span /></span><span>KURIO</span></Link><Link to="/" className="back-link"><ArrowLeft size={14} /> Voltar para explorar</Link><span className="auth-eyebrow">COMECE SUA COLEÇÃO</span><h1>Boas histórias<br /><em>começam aqui.</em></h1><p>Crie sua conta para salvar favoritos, montar seu carrinho e colecionar.</p><form className="auth-form" onSubmit={(event) => void submit(event)}><Input label="Nome completo" id="register-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} required minLength={2} /><Input label="E-mail" id="register-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required /><Input label="Senha" id="register-password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} hint="Pelo menos 8 caracteres." required minLength={8} />{error && <p className="form-alert" role="alert">{error}</p>}<Button size="lg" className="auth-submit" disabled={busy}>{busy ? 'Criando...' : 'Criar minha conta'} <ArrowRight size={16} /></Button></form><p className="auth-switch">Já tem uma conta? <Link to="/login" search={{ returnTo: search.returnTo }}>Entrar <ArrowRight size={13} /></Link></p><div className="demo-hint"><LockKeyhole size={14} /><span>Senha protegida por hash na camada simulada.</span></div></div></PageFrame>
+}
+
+function ProfilePage() { return <Protected><ProfileContent /></Protected> }
+function ProfileContent() {
+  const query = useQuery({ queryKey: keys.profile(), queryFn: service.profile }); const client = useQueryClient(); const toast = useToast(); const navigate = useNavigate()
+  const [name, setName] = useState(''); const [avatar, setAvatar] = useState(''); const [currentPassword, setCurrentPassword] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState('')
+  useEffect(() => { if (query.data) { setName(query.data.name); setAvatar(query.data.avatar) } }, [query.data])
+  const saveProfile = async (event: FormEvent) => { event.preventDefault(); setError(''); try { const user = await service.updateProfile(name, avatar); client.setQueryData(keys.profile(), user); client.setQueryData(keys.session, { user }); toast('Perfil atualizado.', 'success') } catch (reason) { setError(errorMessage(reason)) } }
+  const changePassword = async (event: FormEvent) => { event.preventDefault(); setError(''); try { await service.changePassword(currentPassword, password); setCurrentPassword(''); setPassword(''); toast('Senha alterada com sucesso.', 'success') } catch (reason) { setError(errorMessage(reason)) } }
+  const logout = async () => { await service.logout().catch(() => undefined); localStorage.removeItem(TOKEN_KEY); client.clear(); client.setQueryData(keys.session, { user: null }); void navigate({ to: '/' }); toast('Você saiu da sua conta.', 'info') }
+  return <PageFrame className="account-frame"><div className="account-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SUA CONTA KURIO</div><h1 className="page-title">Meu perfil</h1><p>Cuide dos seus dados e acompanhe sua coleção.</p></div><Button variant="outline" onClick={() => void logout()}><LogOut size={15} /> Sair da conta</Button></div><div className="account-layout"><aside className="account-sidebar"><div className="account-profile-mini"><Avatar user={query.data} size="lg" /><div><b>{query.data?.name}</b><span>{query.data?.email}</span></div></div><Link to="/profile" className="account-nav active"><UserRound size={16} /> Meu perfil <ChevronRight size={15} /></Link><Link to="/wallets" className="account-nav"><WalletCards size={16} /> Carteiras <ChevronRight size={15} /></Link><button className="account-nav" onClick={() => toast('Histórico de pedidos em breve.', 'info')}><PackageCheck size={16} /> Meus pedidos <ChevronRight size={15} /></button><div className="account-sidebar-note"><ShieldCheck size={15} /><span>Seus dados ficam salvos nesta demonstração e são privados da sua sessão.</span></div></aside><div className="account-content"><section className="account-panel"><div className="panel-heading"><div><h2>Informações pessoais</h2><p>Atualize os dados que aparecem no seu perfil.</p></div><span className="panel-step">01</span></div><form onSubmit={(event) => void saveProfile(event)} className="profile-form"><div className="avatar-edit"><Avatar user={{ name, avatar }} size="lg" /><div><b>Sua foto de perfil</b><span>Insira uma URL de imagem ou iniciais (máx. 2).</span></div><Input label="Avatar" id="profile-avatar" aria-label="URL ou iniciais do avatar" value={avatar} onChange={(event) => setAvatar(event.target.value)} placeholder="https://..." /><div className="demo-hint" style={{ marginTop: '8px' }}><Sparkles size={12} /><span>Dica: Use URLs de imagens para um perfil mais profissional.</span></div></div><Input label="Nome completo" id="profile-name" value={name} onChange={(event) => setName(event.target.value)} required /><Input label="E-mail" id="profile-email" type="email" value={query.data?.email ?? ''} disabled hint="O e-mail não pode ser alterado nesta demonstração." />{error && <p className="form-alert">{error}</p>}<div className="panel-actions"><Button type="submit">Salvar alterações <Check size={15} /></Button></div></form></section><section className="account-panel"><div className="panel-heading"><div><h2>Segurança</h2><p>Escolha uma senha segura para sua conta.</p></div><span className="panel-step">02</span></div><form onSubmit={(event) => void changePassword(event)} className="password-form"><Input label="Senha atual" id="current-password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /><Input label="Nova senha" id="new-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} hint="Pelo menos 8 caracteres." required />{error && <p className="form-alert">{error}</p>}<div className="panel-actions"><Button type="submit" variant="outline">Alterar senha <LockKeyhole size={14} /></Button></div></form></section></div></div><ScenarioControl /></PageFrame>
+}
+
+function WalletsPage() { return <Protected><WalletsContent /></Protected> }
+function WalletsContent() {
+  const query = useQuery({ queryKey: keys.wallets(), queryFn: service.wallets }); const client = useQueryClient(); const toast = useToast()
+  const [label, setLabel] = useState(''); const [address, setAddress] = useState(''); const [network, setNetwork] = useState('Ethereum'); const [error, setError] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editLabel, setEditLabel] = useState('')
+  const [editNetwork, setEditNetwork] = useState('Ethereum')
+
+  const save = async (event: FormEvent) => { event.preventDefault(); setError(''); try { await service.addWallet({ label, address, network }); setLabel(''); setAddress(''); await client.invalidateQueries({ queryKey: keys.wallets() }); toast('Carteira adicionada.', 'success') } catch (reason) { setError(errorMessage(reason)) } }
+  const update = async (id: string) => { try { await walletService.updateWallet(id, { label: editLabel, network: editNetwork }); setEditingId(null); await client.invalidateQueries({ queryKey: keys.wallets() }); toast('Carteira atualizada.', 'success') } catch (reason) { toast(errorMessage(reason), 'error') } }
+  const primary = async (id: string) => { try { await service.setPrimaryWallet(id); await client.invalidateQueries({ queryKey: keys.wallets() }); toast('Carteira principal atualizada.', 'success') } catch (reason) { toast(errorMessage(reason), 'error') } }
+
+  return <PageFrame className="account-frame"><div className="account-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SUA CONTA KURIO</div><h1 className="page-title">Minhas carteiras</h1><p>Gerencie suas carteiras para pagamentos simulados.</p></div><Link to="/profile" className="continue-link"><ArrowLeft size={14} /> Voltar ao perfil</Link></div><div className="wallets-page-layout"><section className="account-panel"><div className="panel-heading"><div><h2>Carteiras cadastradas</h2><p>Você pode salvar redes diferentes para seus próximos pedidos.</p></div><span className="panel-step">{String(query.data?.length ?? 0).padStart(2, '0')}</span></div>{query.isPending ? <Skeleton className="wallet-list-skeleton" /> : query.data?.length ? <div className="wallet-list">{query.data.map((wallet) => (editingId === wallet.id ? (
+    <div className="wallet-row" key={wallet.id} style={{ gap: '10px' }}>
+      <span className="wallet-option-icon"><WalletCards size={19} /></span>
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 120px', gap: '10px' }}>
+        <Input value={editLabel} onChange={(e) => setEditLabel(e.target.value)} placeholder="Label" />
+        <Select value={editNetwork} onChange={(e) => setEditNetwork(e.target.value)}>{networkNames.map(n => <option key={n}>{n}</option>)}</Select>
+      </div>
+      <div style={{ display: 'flex', gap: '5px' }}>
+        <Button size="sm" onClick={() => void update(wallet.id)}><Check size={14} /></Button>
+        <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}><X size={14} /></Button>
+      </div>
+    </div>
+  ) : (
+    <div className="wallet-row" key={wallet.id}><span className="wallet-option-icon"><WalletCards size={19} /></span><div><b>{wallet.label}</b><span>{shortAddress(wallet.address)} · {wallet.network}</span></div>{wallet.primary ? <span className="primary-pill">PRINCIPAL</span> : <div style={{ display: 'flex', gap: '5px' }}><Button variant="outline" size="sm" onClick={() => void primary(wallet.id)}>Tornar principal</Button><Button variant="ghost" size="sm" onClick={() => { setEditingId(wallet.id); setEditLabel(wallet.label); setEditNetwork(wallet.network); }}><ArrowDownUp size={14} /></Button></div>}</div>
+  )))}</div> : <div className="wallet-empty"><WalletCards size={23} /><b>Nenhuma carteira cadastrada</b><span>Adicione uma carteira para usá-la durante o checkout.</span></div>}</section><section className="account-panel add-wallet-panel"><div className="panel-heading"><div><h2>Adicionar carteira</h2><p>Insira um endereço compatível com Ethereum.</p></div><span className="panel-step">+</span></div><form onSubmit={(event) => void save(event)} className="wallet-form"><Input label="Nome da carteira" id="wallet-label" value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Ex.: Minha MetaMask" required /><Input label="Endereço da carteira" id="wallet-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="0x..." required hint="40 caracteres hexadecimais após 0x." /><Select label="Rede" id="wallet-network" value={network} onChange={(event) => setNetwork(event.target.value)}>{networkNames.map((item) => <option key={item}>{item}</option>)}</Select>{error && <p className="form-alert">{error}</p>}<Button type="submit">Adicionar carteira <Plus size={15} /></Button><p className="wallet-sim-note"><ShieldCheck size={14} /> Não conectamos carteiras reais neste ambiente.</p></form></section></div><ScenarioControl /></PageFrame>
+}
+
+function FavoritesPage() { return <Protected><FavoritesContent /></Protected> }
+function FavoritesContent() {
+  const favorites = useFavorites(true); const catalog = useCatalog({ q: '', category: 'All', sort: 'popular', page: 1 }); const ids = favorites.data ?? []; const items = catalog.data?.items.filter((nft) => ids.includes(nft.id)) ?? []
+  return <PageFrame className="account-frame"><div className="account-heading"><div><div className="eyebrow"><span className="eyebrow-line" />SEU CANTINHO FAVORITO</div><h1 className="page-title">Peças salvas</h1><p>Volte quando quiser às histórias que chamaram sua atenção.</p></div><Link to="/" className="continue-link"><ArrowLeft size={14} /> Explorar</Link></div>{favorites.isPending || catalog.isPending ? <CatalogSkeleton /> : items.length ? <div className="nft-grid">{items.map((nft, index) => <NFTCard key={nft.id} nft={nft} index={index} />)}</div> : <div className="empty-state"><div className="empty-icon"><Heart size={24} /></div><h2>Suas favoritas aparecem aqui</h2><p>Toque no coração de uma peça para guardar para depois.</p><Link className="button button-primary" to="/">Descobrir peças <ArrowRight size={15} /></Link></div>}<ScenarioControl /></PageFrame>
+}
+
+function NotFoundPage() { return <PageFrame><div className="empty-state"><div className="empty-icon"><Compass size={24} /></div><h1>Não encontramos esse caminho</h1><p>Mas tem muita coisa bonita esperando na página inicial.</p><Link to="/" className="button button-primary">Voltar ao início <ArrowRight size={15} /></Link></div></PageFrame> }
+
+function ScenarioControl({ focusNft }: { focusNft?: NFT }) {
+  const toast = useToast(); const cart = useCart(); const [open, setOpen] = useState(false); const [scenario, setScenario] = useState('standard')
+  const setMode = async (next: string) => { setScenario(next); try { await service.setScenario(next); toast(`Cenário de demonstração: ${scenarioLabels[next] ?? next}.`, 'info') } catch { toast('Não foi possível alterar o cenário.', 'error') } }
+  const priceTarget = focusNft?.id ?? cart.data?.lines[0]?.nftId ?? 'ember-002'
+  return <div className={`demo-control ${open ? 'demo-open' : ''}`}><button className="demo-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span className="demo-toggle-icon"><Sparkles size={14} /></span><span>DEMO</span><ChevronDown size={13} /></button>{open && <div className="demo-panel"><div className="demo-panel-top"><span>CONTROLES DE DEMONSTRAÇÃO</span><button className="icon-button" onClick={() => setOpen(false)} aria-label="Fechar controles"><X size={14} /></button></div><label className="demo-label">Cenário de rede<select aria-label="Cenário de rede" value={scenario} onChange={(event) => void setMode(event.target.value)}>{Object.entries(scenarioLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><div className="demo-actions"><button onClick={() => { emitScenario('scenario:price', priceTarget); toast('Enviando atualização de preço pelo Socket.IO.', 'info') }}><ArrowDownUp size={14} /> Alterar preço</button><button onClick={() => { emitScenario('scenario:inventory', priceTarget, 1); toast('Enviando disponibilidade pelo Socket.IO.', 'info') }}><PackageCheck size={14} /> Edição quase esgotada</button><button onClick={() => { emitScenario('scenario:duplicate', priceTarget); toast('Enviando evento repetido e antigo pelo Socket.IO.', 'info') }}><MoreHorizontal size={14} /> Duplicar evento (teste)</button></div><button className="demo-reset" onClick={async () => { await service.reset(); localStorage.removeItem(couponKey); localStorage.removeItem(TOKEN_KEY); window.location.assign('/') }}>Restaurar cenário inicial</button><small>Eventos passam pelo cliente Socket.IO · API REST simulada por MSW</small></div>}</div>
+}
+const scenarioLabels: Record<string, string> = { standard: 'Padrão', empty: 'Catálogo vazio', slow: 'Rede lenta', variable: 'Latência variável', 'http-error': 'Falha HTTP 503', 'mutation-error': 'Falha de favorito', 'payment-declined': 'Pagamento recusado', 'session-expired': 'Sessão expirada', timeout: 'Timeout no pedido' }
+
+function validateSearch(search: Record<string, unknown>): Partial<SearchState> {
+  const rawPage = Number(search.page ?? 1)
+  const allowedSorts: SortKey[] = ['popular', 'newest', 'price-asc', 'price-desc']
+  return { q: typeof search.q === 'string' ? search.q : undefined, category: typeof search.category === 'string' ? search.category : undefined, sort: allowedSorts.includes(search.sort as SortKey) ? search.sort as SortKey : undefined, page: Number.isFinite(rawPage) ? Math.max(1, rawPage) : undefined, minPrice: typeof search.minPrice === 'string' ? search.minPrice : undefined, maxPrice: typeof search.maxPrice === 'string' ? search.maxPrice : undefined, available: search.available === true || search.available === 'true' ? true : undefined }
+}
+const rootRoute = createRootRoute({ component: RootLayout, notFoundComponent: NotFoundPage })
+const HomeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', validateSearch, component: HomePage })
+const NFTRoute = createRoute({ getParentRoute: () => rootRoute, path: '/nft/$nftId', component: NFTDetailPage })
+const CartRoute = createRoute({ getParentRoute: () => rootRoute, path: '/cart', component: CartPage })
+const CheckoutRoute = createRoute({ getParentRoute: () => rootRoute, path: '/checkout', component: CheckoutPage })
+const OrderRoute = createRoute({ getParentRoute: () => rootRoute, path: '/order/$orderId', component: OrderPage })
+const LoginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', validateSearch: (search: Record<string, unknown>): { returnTo?: string } => ({ returnTo: typeof search.returnTo === 'string' ? search.returnTo : undefined }), component: LoginPage })
+const RegisterRoute = createRoute({ getParentRoute: () => rootRoute, path: '/register', validateSearch: (search: Record<string, unknown>): { returnTo?: string } => ({ returnTo: typeof search.returnTo === 'string' ? search.returnTo : undefined }), component: RegisterPage })
+const ProfileRoute = createRoute({ getParentRoute: () => rootRoute, path: '/profile', component: ProfilePage })
+const WalletsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/wallets', component: WalletsPage })
+const FavoritesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/favorites', component: FavoritesPage })
+const routeTree = rootRoute.addChildren([HomeRoute, NFTRoute, CartRoute, CheckoutRoute, OrderRoute, LoginRoute, RegisterRoute, ProfileRoute, WalletsRoute, FavoritesRoute])
+export const router = createRouter({ routeTree, defaultPreload: 'intent', scrollRestoration: true })
+declare module '@tanstack/react-router' { interface Register { router: typeof router } }
+
+export default function App() { return <RouterProvider router={router} /> }
+

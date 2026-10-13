@@ -1,0 +1,40 @@
+/* Auth */
+.auth-frame { min-height: 700px; width: min(940px, calc(100% - 44px)); padding: 42px 0 60px; display: grid; grid-template-columns: .9fr 1.1fr; gap: 52px; align-items: center; }
+.auth-aside { min-height: 500px; padding: 30px; position: relative; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; border: 1px solid rgba(245,130,63,.18); border-radius: 10px; background: linear-gradient(155deg, #392217, #1d1510 57%, #17130f); }
+.auth-aside::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 61% 31%, #e0884938, transparent 55%), radial-gradient(circle at 10% 90%, #944c2f24, transparent 44%); }
+.auth-art-mark { position: absolute; top: 60px; left: 0; right: 0; height: 275px; }
+.auth-sun { position: absolute; width: 180px; height: 180px; left: 50%; top: 30px; transform: translateX(-50%); background: radial-gradient(circle at 35% 30%, #ffbd82, #b55533 63%, #562d22); border-radius: 50%; box-shadow: 0 0 100px #e0764330; }
+.auth-sun::before, .auth-sun::after { content: ''; position: absolute; background: #241810; opacity: .8; }
+.auth-sun::before { width: 45px; height: 7px; border-radius: 100%; top: 74px; left: 45px; transform: rotate(-12deg); }
+.auth-sun::after { width: 30px; height: 6px; border-radius: 100%; top: 96px; right: 34px; transform: rotate(16deg); }
+.auth-orbit { position: absolute; top: 70px; left: 50%; width: 260px; height: 150px; border: 1px solid #f4b5846b; border-radius: 50%; transform: translateX(-50%) rotate(-23deg); }
+.auth-orbit::after { content: ''; position: absolute; width: 11px; height: 11px; border-radius: 50%; left: 24px; top: 26px; background: #ffbd80; box-shadow: 0 0 15px #ffbd80; }
+.auth-aside .eyebrow, .auth-aside blockquote, .auth-aside-foot { position: relative; z-index: 1; }
+.auth-aside blockquote { margin: 12px 0 23px; color: #f2e4d7; font: 500 21px/1.45 'Playfair Display', Georgia, serif; }
+.auth-aside-foot { display: flex; align-items: center; gap: 9px; padding-top: 16px; border-top: 1px solid #ffffff18; }
+.auth-aside-foot > span:nth-child(2) { display: flex; flex-direction: column; gap: 3px; }
+.auth-aside-foot b { color: #ecdccb; font-size: 9px; }
+.auth-aside-foot small { color: #ad9988; font-size: 8px; }
+.verified-mark { margin-left: auto; color: var(--orange-light); }
+.auth-card { width: 100%; max-width: 390px; padding: 15px 0; }
+.back-link { display: inline-flex; align-items: center; gap: 6px; color: #9c8d7e; font-size: 9px; }
+.back-link:hover { color: var(--orange-light); }
+.auth-eyebrow { display: block; margin-top: 29px; color: #b97953; font-size: 8px; letter-spacing: 1.5px; font-weight: 700; }
+.auth-card h1 { margin: 9px 0 9px; font-size: 38px; line-height: 1.16; letter-spacing: -1.1px; }
+.auth-card > p { color: #9a8d80; font-size: 9px; line-height: 1.7; }
+.auth-form { display: flex; flex-direction: column; gap: 13px; margin-top: 20px; }
+.forgot-link { align-self: flex-end; margin-top: -5px; color: #bd8a67; background: transparent; border: 0; cursor: pointer; font-size: 8px; }
+.auth-submit, .wallet-login { width: 100%; }
+.auth-divider { margin: 17px 0 13px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #776b60; font-size: 8px; }
+.auth-divider span { height: 1px; flex: 1; background: var(--line); }
+.wallet-login { font-size: 10px; }
+.auth-switch { margin: 18px 0 0; color: #938476; text-align: center; font-size: 9px; }
+.auth-switch a { margin-left: 4px; color: var(--orange-light); display: inline-flex; align-items: center; gap: 4px; }
+.demo-hint { display: flex; align-items: flex-start; gap: 7px; margin-top: 18px; padding: 9px; color: #8d765f; background: #201810; border: 1px solid #422f20; border-radius: 5px; font-size: 8px; }
+.demo-hint svg { color: var(--orange-light); flex: 0 0 auto; }
+.demo-hint b { color: #c7a17e; }
+.register-frame { min-height: 740px; }
+.register-aside { background: linear-gradient(155deg, #183139, #18201c 62%, #17130f); }
+.register-aside .auth-sun { background: radial-gradient(circle at 35% 30%, #e6d09e, #67877a 63%, #384b42); }
+.register-aside .auth-orbit { border-color: #b5d0b073; }
+.register-aside .auth-orbit::after { background: #cee5c1; box-shadow: 0 0 15px #cee5c1; }

@@ -1,0 +1,21 @@
+/* Demo controls, footer, toast */
+.demo-control { position: fixed; z-index: 40; bottom: 18px; right: 18px; }
+.demo-toggle { display: flex; align-items: center; gap: 7px; padding: 8px 11px; color: #bbaa98; background: #201911; border: 1px solid #55402e; border-radius: 99px; cursor: pointer; box-shadow: 0 5px 18px #0004; font-size: 7px; letter-spacing: 1px; }
+.demo-toggle:hover { color: var(--orange-light); border-color: #a4663c; }
+.demo-toggle-icon { color: var(--orange-light); }
+.demo-panel { position: absolute; right: 0; bottom: 43px; width: 274px; padding: 12px; border: 1px solid #5b4431; border-radius: 8px; background: #1c1711; box-shadow: 0 13px 35px #0008; }
+.demo-panel-top { display: flex; align-items: center; justify-content: space-between; color: #a87c59; font-size: 7px; letter-spacing: 1px; margin-bottom: 10px; }
+.demo-label { display: flex; flex-direction: column; gap: 6px; color: #a39384; font-size: 8px; }
+.demo-label select { height: 31px; padding: 0 8px; color: #dfcfbd; background: #120f0c; border: 1px solid #403227; border-radius: 4px; font-size: 8px; }
+.demo-actions { display: flex; flex-direction: column; gap: 5px; margin-top: 9px; }
+.demo-actions button { min-height: 29px; display: flex; align-items: center; gap: 7px; padding: 0 8px; color: #d3c0ae; background: #281e15; border: 1px solid #493422; border-radius: 4px; cursor: pointer; font-size: 8px; text-align: left; }
+.demo-actions button:hover { color: var(--orange-light); border-color: #875330; }
+.demo-reset { width: 100%; margin: 8px 0; padding: 7px; color: #d09574; background: transparent; border: 1px dashed #65452f; border-radius: 4px; cursor: pointer; font-size: 8px; }
+.demo-panel > small { display: block; color: #786c60; font-size: 6px; line-height: 1.5; }
+.site-footer { border-top: 1px solid var(--line); background: #0d0c0a; }
+.footer-inner { width: min(1240px, calc(100% - 72px)); min-height: 77px; margin: auto; display: flex; align-items: center; gap: 22px; color: #7e7166; font-size: 8px; }
+.footer-inner .brand { font-size: 17px; }
+.footer-inner .brand-mark { width: 19px; height: 19px; border-radius: 5px 5px 5px 2px; }
+.footer-inner .brand-mark span { width: 7px; height: 7px; }
+.footer-note { margin-left: auto; }
+.mobile-bottom-nav { display: none; }
